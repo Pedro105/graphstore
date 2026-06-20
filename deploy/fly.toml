@@ -1,0 +1,54 @@
+# Fly.io config for the ContextStore FastAPI backend.
+#
+# Deploy from the REPO ROOT so the Docker build context can see pyproject.toml /
+# uv.lock / src:
+#   fly deploy --config deploy/fly.toml
+#
+# Secrets (API keys, DATABASE_URL, ADMIN_TOKEN, FALKORDB_PASSWORD) are NOT here
+# -- they go in `fly secrets` (see docs/deployment.md). Only non-secret config
+# lives in [env].
+
+app = "contextstore-api"
+primary_region = "lhr"  # nearest Fly region to the Supabase project (AWS eu-west-1, Ireland)
+
+[build]
+  # Path is relative to THIS fly.toml's directory (deploy/), NOT the repo root:
+  # flyctl resolves build.dockerfile against the config file's location. The
+  # build *context*, separately, is the working directory `fly deploy` runs in
+  # (the repo root), so the Dockerfile's COPY of pyproject.toml/uv.lock/src works.
+  dockerfile = "Dockerfile"
+
+[env]
+  ENVIRONMENT = "production"
+  LOG_LEVEL = "INFO"
+  # Private 6PN address of the self-hosted FalkorDB app in the same region.
+  # The password is a secret (FALKORDB_PASSWORD); host/port are not.
+  FALKORDB_HOST = "contextstore-falkordb.internal"
+  FALKORDB_PORT = "6379"
+  # CORS allow-list. Add the deployed frontend origin here (comma-separated)
+  # when it ships -- editing this + `fly deploy` is enough, no code change.
+  ALLOWED_ORIGINS = "http://localhost:3000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Keep one machine always warm: no scale-to-zero, so no cold start on a demo.
+  # Costs ~one shared-cpu-1x running 24/7 (~$2-4/mo). See docs/deployment.md.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  # Fly polls /health; a 503 (FalkorDB or Postgres unreachable) marks the
+  # machine unhealthy and pulls it out of rotation / triggers a restart.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1

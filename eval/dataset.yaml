@@ -1,0 +1,264 @@
+# Ground-truth eval cases for /v1/recall, used by run_eval.py.
+#
+# All cases below run against tenant_id eval_test, populated by
+# scripts/populate_graph.py: 3 mutually-isolated clusters (Helios
+# Therapeutics/biotech, Cascade/open-source ML, Solstice Motors/EV supply
+# chain), each with an engineered 2-hop-only chain (documented in that
+# script's module docstring) and multi-source provenance. This replaces the
+# old 5-case Acme Corp/Globex/Product Y set (that tenant, contextstore_demo,
+# isn't part of this graph) -- see git history if you need the old cases.
+#
+# Each case:
+#   id:                 short, unique, stable identifier
+#   category:           exact_term | single_hop | bridging | provenance |
+#                        isolation (run_eval.py groups by whatever string is
+#                        here; category: bridging is additionally
+#                        special-cased to auto-run at both traversal_depth=1
+#                        and 2 -- see run_eval.py's module docstring)
+#   query:               natural-language query sent to /v1/recall
+#   limit:               optional, overrides --limit for this case. Several
+#                        cases below need a specific value because of
+#                        Anomaly 3 (FalkorDB HNSW under-returns at small k on
+#                        small graphs) -- this is a known small-graph
+#                        artifact, not a retrieval quality issue, so the
+#                        right move is encoding the working limit per case,
+#                        not fighting it. Verified empirically (see comments
+#                        below) by calling find_similar_entities directly
+#                        and checking what each k actually seeds.
+#   traversal_depth:     optional, overrides --traversal-depth for this
+#                        case. Not used by bridging cases (those are always
+#                        run at both 1 and 2 automatically).
+#   expected_entities:   entity NAMES (not ids -- ids are regenerated every
+#                        time the tenant is wiped/reseeded, names are stable
+#                        enough for this small a graph) that must all appear
+#                        in the result for the case to count as a hit
+#   expected_properties: optional. Map of entity name -> {property: value}.
+#                        Checks the ACTUAL value of that property on that
+#                        entity in the result, not just that the entity is
+#                        present.
+#   expected_relations:  optional. List of
+#                        {source, target, relation_type, property, expected_value}
+#                        (source/target are entity NAMES). Matches an edge by
+#                        (source, target, relation_type) in the result, then
+#                        checks that edge's named property value. If no edge
+#                        matches that exact triple, it's reported as a miss
+#                        (edge_found: false) rather than silently skipped.
+#   forbidden_entities:  optional. None of these names may appear in the
+#                        result -- used by isolation cases to assert no
+#                        cross-cluster bleed.
+#   expected_claim_history: optional. Map of entity name -> {property,
+#                        values: [{value, source, supersedes_previous?}]}.
+#                        Checks the full Entity.claims history (not just the
+#                        active value) -- used by the provenance case to
+#                        confirm the superseded claim is still there, not
+#                        just that the active one is current.
+#   bridge_target:       required for category: bridging. The "C" entity
+#                        that must be unreachable at depth=1 and reachable
+#                        at depth=2.
+#   note:                optional, context a human should know when reading
+#                        a failure
+#
+# Known non-determinism, documented (not in scope to fix, see CLAUDE.md):
+# extraction relation_type and property NAME naming both vary slightly
+# across re-ingestions of the same sentence (e.g. the funding round's
+# active property below has been observed as `amount_raised`, `amount`, or
+# `total_amount` depending on the run). If you re-seed eval_test and a case
+# starts failing only on a property/relation NAME (not the underlying
+# value or graph shape), check the real data with GET /v1/graph before
+# assuming a regression, same as the historical note this replaced.
+
+cases:
+  # --- exact_term (2): vector search alone should seed the named entity. ---
+  - id: exact_term_korrigan
+    category: exact_term
+    query: "Korrigan Cells Ltd"
+    limit: 2
+    expected_entities:
+      - Korrigan Cells Ltd
+    note: >
+      Sanity check: querying an entity's exact name retrieves it via vector
+      similarity alone. limit=2 confirmed sufficient (find_similar_entities
+      returns it at sim=0.91).
+
+  - id: exact_term_rg88
+    category: exact_term
+    query: "RG-88"
+    limit: 3
+    expected_entities:
+      - RG-88
+    note: >
+      limit=3, not 2: at limit=2 this query seeds zero entities (Anomaly 3 --
+      verified directly via find_similar_entities). limit=3 reliably seeds
+      RG-88 (plus its 1-hop neighbours, which don't affect this presence-only
+      check).
+
+  # --- single_hop (3): answer lives on a direct neighbour of the seed. ---
+  - id: single_hop_korrigan_produces
+    category: single_hop
+    query: "What component does Korrigan Cells Ltd produce?"
+    limit: 2
+    expected_entities:
+      - Korrigan Cells Ltd
+      - LFP-9 Cell
+    note: >
+      Direct edge: Korrigan Cells Ltd -[manufactures]-> LFP-9 Cell. limit=2
+      verified to seed ONLY Korrigan Cells Ltd (no cross-cluster bleed --
+      see isolation cases' note on why higher k can pull in low-similarity
+      noise on this graph), so LFP-9 Cell can only be reached by the
+      traversal step, not by vector search seeding it directly.
+
+  - id: single_hop_neosilicon_sponsors
+    category: single_hop
+    query: "What open source project does NeoSilicon sponsor?"
+    limit: 2
+    expected_entities:
+      - NeoSilicon
+      - Cascade
+    note: >
+      Direct edge: NeoSilicon -[sponsors]-> Cascade. limit=2 verified to seed
+      only NeoSilicon.
+
+  - id: single_hop_fda_grant
+    category: single_hop
+    query: "What designation did the FDA grant?"
+    limit: 2
+    expected_entities:
+      - FDA
+      - HLX-203
+    note: >
+      Direct edge: FDA -[granted_orphan_drug_designation_to]-> HLX-203.
+      limit=2 verified to seed only FDA.
+
+  # --- bridging (3): the falsifiability cases. Each declares bridge_target;
+  # run_eval.py automatically runs these at depth=1 (control, bridge_target
+  # must be ABSENT) and depth=2 (target, normal hit check) -- no per-case
+  # traversal_depth needed or wanted here. ---
+  - id: bridging_chen_to_rg88
+    category: bridging
+    query: "Dr. Sarah Chen"
+    limit: 3
+    bridge_target: RG-88
+    expected_entities:
+      - Dr. Sarah Chen
+      - CRISPR-X stability study
+      - RG-88
+    note: >
+      2-hop chain (Cluster A, biotech): Dr. Sarah Chen -[authored]->
+      CRISPR-X stability study -[informed_by, reversed]-> RG-88. No direct
+      Chen<->RG-88 edge -- engineered at ingestion time (the two halves of
+      the chain were written in separate POST /v1/memories calls that never
+      co-mention both Chen and RG-88; see scripts/populate_graph.py). RG-88
+      is RiboGen's rival compound, semantically distant enough from Chen/
+      Stanford that vector search doesn't seed it directly. limit=2 under-
+      seeds Chen entirely on this graph (Anomaly 3); limit=3 is the verified
+      working value -- confirmed via direct /v1/recall calls: depth=1
+      reaches only {Chen, Helios Therapeutics, Stanford University, CRISPR-X
+      stability study}, depth=2 additionally reaches RG-88.
+
+  - id: bridging_osei_to_auroraml
+    category: bridging
+    query: "Dr. Amara Osei"
+    limit: 4
+    bridge_target: AuroraML
+    expected_entities:
+      - Dr. Amara Osei
+      - Cascade v3 architecture whitepaper
+      - AuroraML
+    note: >
+      2-hop chain (Cluster B, OSS): Dr. Amara Osei -[authored]-> Cascade v3
+      architecture whitepaper <-[influenced_by]- AuroraML. No direct Osei
+      <->AuroraML edge -- the whitepaper->AuroraML influence fact was
+      written in a separate call naming Priya Nair, not Osei. limit=2 and
+      limit=3 both under-seed Osei on this graph (Anomaly 3); limit=4 is the
+      verified working value -- depth=1 reaches only {Osei, Cascade, Vertex
+      AI Labs, UC Berkeley AI Research Lab, the whitepaper}, depth=2
+      additionally reaches AuroraML.
+
+  - id: bridging_korrigan_to_recall
+    category: bridging
+    query: "Korrigan Cells Ltd"
+    limit: 2
+    bridge_target: Voluntary Safety Recall R-2025-014
+    expected_entities:
+      - Korrigan Cells Ltd
+      - LFP-9 Cell
+      - Voluntary Safety Recall R-2025-014
+    note: >
+      2-hop chain (Cluster C, supply chain): Korrigan Cells Ltd
+      -[manufactures]-> LFP-9 Cell -[causes_delays_for/root-cause]->
+      Voluntary Safety Recall R-2025-014. No direct Korrigan<->Recall edge --
+      the recall fact names LFP-9 Cell as the root cause without mentioning
+      Korrigan. limit=2 verified: depth=1 reaches only {Korrigan Cells Ltd,
+      LFP-9 Cell}, depth=2 additionally reaches the recall (plus Aegis
+      Battery Pack, also a real 2-hop neighbour of LFP-9 Cell).
+
+  # --- provenance (1): tests claim supersession, not just last-write-wins
+  # property overwrite. ---
+  - id: provenance_series_a_amount
+    category: provenance
+    query: "Series A funding round"
+    limit: 3
+    expected_entities:
+      - Series A funding round
+    expected_properties:
+      Series A funding round:
+        amount_raised: "$45 million"
+    expected_claim_history:
+      Series A funding round:
+        property: amount_raised
+        values:
+          - value: "$42 million"
+            source: agent_finance
+          - value: "$45 million"
+            source: agent_pr
+            supersedes_previous: true
+    note: >
+      agent_finance wrote $42 million first; agent_pr later wrote $45
+      million for the same entity and property. Active value must be the
+      latest ($45 million, checked via expected_properties); the original
+      $42 million claim must still exist in history, and the $45 million
+      claim must carry a non-empty provenance.supersedes (both checked via
+      expected_claim_history) -- this is what distinguishes real claim
+      supersession (resolution/entity_resolver.py's apply_claim) from a
+      naive overwrite that would lose the $42 million claim entirely.
+
+  # --- isolation (2): cluster-specific queries must not bleed into the
+  # other two clusters. ---
+  - id: isolation_cluster_a_biotech
+    category: isolation
+    query: "biotech startup pancreatic cancer drug compound research pipeline"
+    limit: 5
+    expected_entities:
+      - Helios Therapeutics
+    forbidden_entities:
+      - Cascade
+      - AuroraML
+      - Dr. Amara Osei
+      - Priya Nair
+      - Solstice Motors
+      - Korrigan Cells Ltd
+      - LFP-9 Cell
+      - Voluntary Safety Recall R-2025-014
+    note: >
+      Verified at limit=3/5/8 that this query only ever seeds/traverses into
+      Cluster A entities (Helios Therapeutics, RiboGen Inc, HLX-203, RG-88,
+      pancreatic cancer, etc.) -- no Cluster B/C names ever appear.
+
+  - id: isolation_cluster_c_supply_chain
+    category: isolation
+    query: "electric vehicle battery supply chain manufacturer recall component defect"
+    limit: 5
+    expected_entities:
+      - Solstice Motors
+    forbidden_entities:
+      - Helios Therapeutics
+      - Dr. Sarah Chen
+      - RG-88
+      - RiboGen Inc
+      - Cascade
+      - AuroraML
+      - Dr. Amara Osei
+    note: >
+      Verified at limit=3/5/8 that this query only ever seeds/traverses into
+      Cluster C entities (Solstice Motors, Vanta Battery Co, Aegis Battery
+      Pack, the recall, etc.) -- no Cluster A/B names ever appear.

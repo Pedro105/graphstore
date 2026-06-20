@@ -1,0 +1,40 @@
+# Keep the build context small and ensure no secrets or host-built artifacts
+# leak into the image. Only pyproject.toml, uv.lock, README.md and src/ are
+# actually COPYed by deploy/Dockerfile -- everything else is excluded.
+
+# Secrets -- never copy these into an image layer.
+.env
+.env.*
+
+# Host virtualenv (the image builds its own) and caches.
+.venv/
+venv/
+env/
+**/__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# VCS and tooling.
+.git/
+.gitignore
+.pre-commit-config.yaml
+
+# Frontend is deployed separately; not part of the backend image.
+frontend/
+
+# Tests, eval, scripts, docs, deploy configs -- not needed at runtime.
+tests/
+eval/
+scripts/
+docs/
+deploy/
+migrations/
+
+# OS / editor cruft.
+.DS_Store
+*.swp
+*.log

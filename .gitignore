@@ -1,0 +1,61 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Claude Code working-context / local files (not project documentation)
+CLAUDE.md
+.claude/
+
+# Node (frontend has its own .gitignore too; these guard the repo root)
+node_modules/
+.next/
+
+# Eval run reports (regenerable run artifacts; eval/README.md is kept)
+eval/reports/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+uv.lock.bak
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

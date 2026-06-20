@@ -1,0 +1,45 @@
+# Fly.io config for the self-hosted FalkorDB instance.
+#
+# This is a SEPARATE Fly app from the backend. It has no public service -- it's
+# reachable only over Fly's private 6PN network at `contextstore-falkordb.internal`
+# from the backend app in the same region, so the graph never touches the public
+# internet. Data persists on a Fly volume mounted at /data.
+#
+# One-time setup (see docs/deployment.md for the full sequence):
+#   fly apps create contextstore-falkordb
+#   fly volumes create falkordb_data --region lhr --size 1 -a contextstore-falkordb
+#   fly secrets set -a contextstore-falkordb \
+#     REDIS_ARGS="--requirepass <STRONG_PW> --appendonly yes --appendfsync everysec --bind 0.0.0.0 ::"
+#   fly deploy --config deploy/fly.falkordb.toml
+#
+# The same <STRONG_PW> is set on the backend as FALKORDB_PASSWORD.
+#
+# CRITICAL -- the bind MUST include `::` (IPv6 wildcard), not just 0.0.0.0:
+# Fly's private 6PN network is IPv6-only and `contextstore-falkordb.internal`
+# resolves to an AAAA/IPv6 address. A Redis bound to 0.0.0.0 (IPv4 only) refuses
+# every 6PN connection -> the backend sees "Connection refused" on :6379.
+
+app = "contextstore-falkordb"
+primary_region = "lhr"
+
+[build]
+  # Server-only image: production footprint, port 6379 only. The full
+  # `falkordb/falkordb` image also bundles the FalkorDB Browser (a Next.js UI on
+  # :3000) -- harmless but wasteful here, so we use the server-only build.
+  # Pin to a specific tag once a version is chosen.
+  image = "falkordb/falkordb-server:latest"
+
+[env]
+  # FalkorDB module tuning (non-secret). The password + persistence flags live
+  # in REDIS_ARGS, set via `fly secrets` so the password is never committed.
+  FALKORDB_ARGS = "THREAD_COUNT 4"
+
+# Persistence: AOF/RDB files land in /data, backed by the Fly volume.
+[mounts]
+  source = "falkordb_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  cpus = 1
