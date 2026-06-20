@@ -11,6 +11,7 @@ token) instead, since they mint/revoke the very keys the data routes check.
 """
 
 import secrets
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -28,6 +29,7 @@ class AuthContext(BaseModel):
 
     tenant_id: str
     api_key_id: UUID
+    user_id: UUID
 
 
 def get_db(request: Request) -> Pool:
@@ -42,6 +44,11 @@ def get_db(request: Request) -> Pool:
             detail="Authentication backend is not configured (DATABASE_URL unset).",
         )
     return pool
+
+
+# Shared by every route that needs the auth Postgres pool (data routes,
+# key/project management, and the admin namespace).
+DbDep = Annotated[Pool, Depends(get_db)]
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -75,7 +82,11 @@ async def require_api_key(
             detail="Invalid or revoked API key.",
             headers=_BEARER_CHALLENGE,
         )
-    return AuthContext(tenant_id=resolved.tenant_id, api_key_id=resolved.api_key_id)
+    return AuthContext(
+        tenant_id=resolved.tenant_id,
+        api_key_id=resolved.api_key_id,
+        user_id=resolved.user_id,
+    )
 
 
 def require_admin(authorization: str | None = Header(default=None)) -> None:

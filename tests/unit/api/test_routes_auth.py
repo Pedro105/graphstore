@@ -51,7 +51,9 @@ def client(monkeypatch):
 
     async def fake_resolve(db, raw_key):
         if raw_key == "goodkey":
-            return postgres.ResolvedKey(api_key_id=uuid4(), tenant_id=TENANT_FROM_KEY)
+            return postgres.ResolvedKey(
+                api_key_id=uuid4(), tenant_id=TENANT_FROM_KEY, user_id=uuid4()
+            )
         return None
 
     monkeypatch.setattr(postgres, "resolve_api_key", fake_resolve)

@@ -368,3 +368,51 @@ async def test_find_similar_entities_filters_by_entity_type_and_scope(store, ten
 async def test_ensure_graph_initialized_is_idempotent(store, tenant_id):
     await store.ensure_graph_initialized(tenant_id, embedding_dimension=4)
     await store.ensure_graph_initialized(tenant_id, embedding_dimension=4)
+
+
+# --- Admin operator support: graph_stats / drop_graph ------------------------
+
+
+async def test_graph_stats_zero_for_unwritten_tenant(store, tenant_id):
+    # A tenant whose graph was never written to reports (0, 0), not an error.
+    assert await store.graph_stats(tenant_id) == (0, 0)
+
+
+async def test_graph_stats_counts_nodes_and_edges(store, tenant_id):
+    scope = make_scope(tenant_id)
+    provenance = make_provenance()
+    a = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
+    b = Entity(name="ASML", entity_type="org", scope=scope, provenance=provenance)
+    relation = Relation(
+        source_entity_id=a.id,
+        target_entity_id=b.id,
+        relation_type="works_at",
+        scope=scope,
+        provenance=provenance,
+    )
+    await store.write_memory(
+        Memory(
+            content="Pedro works at ASML.",
+            entities=[a, b],
+            relations=[relation],
+            scope=scope,
+            provenance=provenance,
+        )
+    )
+
+    assert await store.graph_stats(tenant_id) == (2, 1)
+
+
+async def test_drop_graph_wipes_tenant_and_is_idempotent(store, tenant_id):
+    scope = make_scope(tenant_id)
+    provenance = make_provenance()
+    entity = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
+    await store.write_memory(
+        Memory(content="Pedro exists.", entities=[entity], scope=scope, provenance=provenance)
+    )
+    assert await store.graph_stats(tenant_id) == (1, 0)
+
+    await store.drop_graph(tenant_id)
+    assert await store.graph_stats(tenant_id) == (0, 0)
+    # Dropping an already-gone graph is a no-op, not an error.
+    await store.drop_graph(tenant_id)

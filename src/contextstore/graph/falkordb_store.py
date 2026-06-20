@@ -492,6 +492,27 @@ class FalkorDBGraphStore(GraphStore):
         )
         return bool(result.nodes_deleted > 0)
 
+    async def graph_stats(self, tenant_id: str) -> tuple[int, int]:
+        graph = self._graph_for(tenant_id)
+        try:
+            nodes = await graph.query("MATCH (n:Entity) RETURN count(n)")
+            edges = await graph.query("MATCH (:Entity)-[r]->(:Entity) RETURN count(r)")
+        except ResponseError:
+            # Graph key doesn't exist yet (nothing ever written for this tenant).
+            return (0, 0)
+        node_count = int(nodes.result_set[0][0]) if nodes.result_set else 0
+        edge_count = int(edges.result_set[0][0]) if edges.result_set else 0
+        return (node_count, edge_count)
+
+    async def drop_graph(self, tenant_id: str) -> None:
+        graph = self._graph_for(tenant_id)
+        try:
+            await graph.delete()
+        except ResponseError as exc:
+            # Dropping a graph that was never created is a no-op, not a failure.
+            if "key doesn't exist" not in str(exc).lower() and "empty key" not in str(exc).lower():
+                raise
+
     async def health_check(self) -> bool:
         try:
             return bool(await self._client.connection.ping())

@@ -69,14 +69,14 @@ async def test_repeated_relation_between_same_entities_merges_not_duplicates(
     sentence_2 = "Pedro has been working at ASML for the last two years."
 
     try:
-        memory_1 = await remember(
+        memory_1, _tokens_1 = await remember(
             content=sentence_1,
             scope=scope,
             source="dedup_regression_test",
             graph_store=graph_store,
             embedding_provider=embedding_provider,
         )
-        memory_2 = await remember(
+        memory_2, _tokens_2 = await remember(
             content=sentence_2,
             scope=scope,
             source="dedup_regression_test",

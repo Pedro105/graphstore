@@ -36,7 +36,7 @@ async def test_require_api_key_valid(monkeypatch):
 
     async def fake_resolve(db, token):
         assert token == "goodkey"
-        return ResolvedKey(api_key_id=key_id, tenant_id="acme")
+        return ResolvedKey(api_key_id=key_id, tenant_id="acme", user_id=uuid4())
 
     monkeypatch.setattr(auth.postgres, "resolve_api_key", fake_resolve)
 

@@ -16,13 +16,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
-from contextstore.api.auth import AuthContext, get_db, require_admin, require_api_key
+from contextstore.api.auth import AuthContext, DbDep, require_admin, require_api_key
 from contextstore.api.dependencies import EmbeddingProviderDep, GraphStoreDep
 from contextstore.api.ratelimit import require_memories_quota, require_recall_quota
 from contextstore.core.service import recall as recall_service
 from contextstore.core.service import remember as remember_service
 from contextstore.db import postgres
-from contextstore.db.postgres import Pool
 from contextstore.models.entity import Entity
 from contextstore.models.memory import Memory
 from contextstore.models.recall import RecallResult, RetrievalMode
@@ -30,8 +29,6 @@ from contextstore.models.relation import Relation
 from contextstore.models.scope import Scope, ScopeValue
 
 router = APIRouter(prefix="/v1")
-
-DbDep = Annotated[Pool, Depends(get_db)]
 
 # Same charset Scope enforces on tenant_id (it's used as a FalkorDB graph name).
 _SAFE_TENANT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -130,7 +127,7 @@ async def create_memory(
     auth: Annotated[AuthContext, Depends(require_memories_quota)],
 ) -> Memory:
     scope = _scope_from_auth(auth, body.extra_scope)
-    memory = await remember_service(
+    memory, tokens_used = await remember_service(
         content=body.content,
         scope=scope,
         source=body.source,
@@ -139,7 +136,21 @@ async def create_memory(
         confidence=body.confidence,
         evidence=body.evidence,
     )
-    await postgres.log_usage(db, auth.api_key_id, scope.tenant_id, "/v1/memories")
+    # Audit log of the raw submission, decoupled from the graph write: the graph
+    # engine discards `content` after extraction, so this Postgres row is the
+    # only record of what was actually submitted vs. what got extracted. Both
+    # calls are best-effort and never fail the request.
+    await postgres.record_memory_write(
+        db,
+        scope.tenant_id,
+        body.source,
+        body.content,
+        len(memory.entities),
+        len(memory.relations),
+    )
+    await postgres.log_usage(
+        db, auth.api_key_id, scope.tenant_id, "/v1/memories", tokens_used=tokens_used
+    )
     return memory
 
 
@@ -318,3 +329,58 @@ async def delete_agent(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent not found or not owned by this tenant.",
         )
+
+
+# --- Projects: a user can own several separate graphs. Creation is
+# --- self-service (any authenticated key) and mints a new key scoped to the
+# --- new project's tenant, since a key is bound to exactly one tenant. --------
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    description: str | None = None
+
+
+class ProjectResponse(BaseModel):
+    id: UUID
+    tenant_id: str
+    name: str
+    description: str | None
+    created_at: datetime
+
+
+class ProjectCreateResponse(ProjectResponse):
+    """A newly created project plus the API key minted for it. The key is the
+    only time the plaintext exists -- it scopes future requests to this
+    project's tenant/graph."""
+
+    api_key: str
+    api_key_id: UUID
+    note: str = (
+        "Store this key now; it scopes requests to this project and is not retrievable later."
+    )
+
+
+@router.post("/projects", response_model=ProjectCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_project(
+    body: ProjectCreateRequest,
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> ProjectCreateResponse:
+    """Create a new project (a fresh tenant_id = its own FalkorDB graph) owned by
+    the authenticated user, and mint an API key scoped to it. The owner is taken
+    from the calling key, never the request body."""
+    project, raw_key, api_key_id = await postgres.create_project_with_key(
+        db, auth.user_id, body.name, body.description
+    )
+    return ProjectCreateResponse(**project, api_key=raw_key, api_key_id=api_key_id)
+
+
+@router.get("/projects", response_model=list[ProjectResponse])
+async def list_projects(
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> list[ProjectResponse]:
+    """List the authenticated user's own projects (across all their keys)."""
+    rows = await postgres.list_projects_for_user(db, auth.user_id)
+    return [ProjectResponse(**row) for row in rows]

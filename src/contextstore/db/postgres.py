@@ -36,12 +36,15 @@ Pool: TypeAlias = asyncpg.Pool
 
 @dataclass(frozen=True)
 class ResolvedKey:
-    """A successfully authenticated API key: which key, and the tenant it
-    grants access to. tenant_id is authoritative -- it comes from Postgres, not
-    from the caller."""
+    """A successfully authenticated API key: which key, the tenant it grants
+    access to, and the user that owns it. tenant_id is authoritative -- it comes
+    from Postgres, not from the caller. user_id lets user-facing endpoints
+    (e.g. project creation) attribute work to the owning user without trusting
+    anything in the request body."""
 
     api_key_id: UUID
     tenant_id: str
+    user_id: UUID
 
 
 def generate_api_key() -> str:
@@ -74,11 +77,15 @@ async def resolve_api_key(pool: Pool, raw_key: str) -> ResolvedKey | None:
     Scans active keys and bcrypt-verifies each (see module docstring for why a
     direct hash lookup isn't possible with bcrypt).
     """
-    rows = await pool.fetch("SELECT id, tenant_id, key_hash FROM api_keys WHERE revoked_at IS NULL")
+    rows = await pool.fetch(
+        "SELECT id, tenant_id, user_id, key_hash FROM api_keys WHERE revoked_at IS NULL"
+    )
     for row in rows:
         if _verify_key(raw_key, row["key_hash"]):
             await pool.execute("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1", row["id"])
-            return ResolvedKey(api_key_id=row["id"], tenant_id=row["tenant_id"])
+            return ResolvedKey(
+                api_key_id=row["id"], tenant_id=row["tenant_id"], user_id=row["user_id"]
+            )
     return None
 
 
@@ -204,3 +211,201 @@ async def delete_agent(pool: Pool, tenant_id: str, agent_id: UUID) -> bool:
         tenant_id,
     )
     return _command_succeeded(result)
+
+
+# --- Projects (a user-owned tenant_id = one FalkorDB graph) -------------------
+
+# Generated tenant_ids must satisfy the graph-name charset (^[A-Za-z0-9_-]+$),
+# since tenant_id is used directly as a FalkorDB graph name; hex tokens do.
+_TENANT_ID_PREFIX = "proj_"
+
+
+def generate_tenant_id() -> str:
+    """A fresh, graph-name-safe tenant_id for a new project."""
+    return f"{_TENANT_ID_PREFIX}{secrets.token_hex(8)}"
+
+
+async def create_project_with_key(
+    pool: Pool, owner_user_id: UUID, name: str, description: str | None
+) -> tuple[dict[str, Any], str, UUID]:
+    """Provision a new project for a user and mint its first API key, atomically.
+
+    A project is born with a freshly generated tenant_id (its own FalkorDB
+    graph) and an API key scoped to it, so the user can write to the new graph
+    immediately -- switching projects means switching keys. Returns
+    (project_row, raw_key, api_key_id); the raw key is shown once and never
+    stored (only its hash). Both inserts share one transaction so a failure
+    can't leave a project with no key or a key with no project.
+    """
+    tenant_id = generate_tenant_id()
+    raw_key = generate_api_key()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            project = await conn.fetchrow(
+                "INSERT INTO projects (tenant_id, owner_user_id, name, description) "
+                "VALUES ($1, $2, $3, $4) "
+                "RETURNING id, tenant_id, name, description, created_at",
+                tenant_id,
+                owner_user_id,
+                name,
+                description,
+            )
+            key = await conn.fetchrow(
+                "INSERT INTO api_keys (user_id, tenant_id, key_hash, name) "
+                "VALUES ($1, $2, $3, $4) RETURNING id",
+                owner_user_id,
+                tenant_id,
+                hash_key(raw_key),
+                f"{name} default key",
+            )
+    assert project is not None and key is not None  # INSERT ... RETURNING
+    return dict(project), raw_key, key["id"]
+
+
+async def list_projects_for_user(pool: Pool, owner_user_id: UUID) -> list[dict[str, Any]]:
+    """The authenticated user's own projects, newest first."""
+    rows = await pool.fetch(
+        "SELECT id, tenant_id, name, description, created_at FROM projects "
+        "WHERE owner_user_id = $1 ORDER BY created_at DESC",
+        owner_user_id,
+    )
+    return [dict(row) for row in rows]
+
+
+async def get_project_by_tenant(pool: Pool, tenant_id: str) -> dict[str, Any] | None:
+    row = await pool.fetchrow(
+        "SELECT id, tenant_id, owner_user_id, name, description, created_at FROM projects "
+        "WHERE tenant_id = $1",
+        tenant_id,
+    )
+    return dict(row) if row else None
+
+
+# --- Memory write audit log (raw content the graph engine discards) ----------
+
+
+async def record_memory_write(
+    pool: Pool,
+    tenant_id: str,
+    source: str,
+    raw_content: str,
+    extracted_entity_count: int,
+    extracted_relation_count: int,
+) -> None:
+    """Append an audit row for one /v1/memories POST. Best-effort and never
+    raises -- the audit log must not be able to fail a write (same contract as
+    log_usage). Decoupled from the graph write entirely."""
+    try:
+        await pool.execute(
+            "INSERT INTO memory_writes "
+            "(tenant_id, source, raw_content, extracted_entity_count, extracted_relation_count) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            tenant_id,
+            source,
+            raw_content,
+            extracted_entity_count,
+            extracted_relation_count,
+        )
+    except Exception as exc:
+        logger.warning("memory_writes.insert_failed", tenant_id=tenant_id, error=str(exc))
+
+
+async def list_memory_writes(pool: Pool, tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Recent audit rows for one tenant, newest first."""
+    rows = await pool.fetch(
+        "SELECT id, tenant_id, source, raw_content, extracted_entity_count, "
+        "extracted_relation_count, created_at FROM memory_writes "
+        "WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2",
+        tenant_id,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
+async def delete_memory_write(pool: Pool, tenant_id: str, memory_write_id: UUID) -> bool:
+    """Hard-delete one audit row, constrained to its tenant. Returns False if it
+    doesn't exist or belongs to another tenant. Note: this removes only the
+    audit record -- it does NOT un-write anything in the graph."""
+    result = await pool.execute(
+        "DELETE FROM memory_writes WHERE id = $1 AND tenant_id = $2",
+        memory_write_id,
+        tenant_id,
+    )
+    return _command_succeeded(result)
+
+
+# --- Operator admin: cross-tenant reads + destructive wipes ------------------
+
+
+async def list_users_with_project_counts(pool: Pool) -> list[dict[str, Any]]:
+    """Every user with how many projects they own (admin overview)."""
+    rows = await pool.fetch(
+        "SELECT u.id, u.email, u.created_at, COUNT(p.id) AS project_count "
+        "FROM users u LEFT JOIN projects p ON p.owner_user_id = u.id "
+        "GROUP BY u.id, u.email, u.created_at ORDER BY u.created_at"
+    )
+    return [dict(row) for row in rows]
+
+
+async def list_all_projects(pool: Pool) -> list[dict[str, Any]]:
+    """Every project across all users, with owner email and last-activity
+    timestamp from usage_log. Live graph node/edge counts are NOT joined here
+    (they live in FalkorDB, per tenant) -- the admin route layers those on."""
+    rows = await pool.fetch(
+        "SELECT p.id, p.tenant_id, p.name, p.description, p.created_at, "
+        "p.owner_user_id, u.email AS owner_email, "
+        "(SELECT MAX(created_at) FROM usage_log WHERE tenant_id = p.tenant_id) "
+        "AS last_activity_at "
+        "FROM projects p JOIN users u ON u.id = p.owner_user_id "
+        "ORDER BY p.created_at DESC"
+    )
+    return [dict(row) for row in rows]
+
+
+async def list_usage(
+    pool: Pool, tenant_id: str | None = None, limit: int = 500
+) -> list[dict[str, Any]]:
+    """Usage-log rows across all tenants (or one, if `tenant_id` is given),
+    newest first, with token counts and endpoint for cost breakdowns."""
+    if tenant_id is not None:
+        rows = await pool.fetch(
+            "SELECT id, api_key_id, tenant_id, endpoint, tokens_used, created_at "
+            "FROM usage_log WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2",
+            tenant_id,
+            limit,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id, api_key_id, tenant_id, endpoint, tokens_used, created_at "
+            "FROM usage_log ORDER BY created_at DESC LIMIT $1",
+            limit,
+        )
+    return [dict(row) for row in rows]
+
+
+async def delete_project_cascade(pool: Pool, tenant_id: str) -> bool:
+    """Wipe all Postgres rows for a tenant, in FK-safe order, in one
+    transaction: usage_log -> agents -> api_keys -> memory_writes -> project.
+    Returns True if the project existed (and was therefore deleted).
+
+    This is the Postgres half of the admin "wipe tenant" operation; the caller
+    is responsible for dropping the tenant's FalkorDB graph separately. Order
+    matters: usage_log references api_keys, and api_keys/memory_writes reference
+    projects, so dependents are removed before the rows they point at."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM usage_log WHERE tenant_id = $1", tenant_id)
+            await conn.execute("DELETE FROM agents WHERE tenant_id = $1", tenant_id)
+            await conn.execute("DELETE FROM api_keys WHERE tenant_id = $1", tenant_id)
+            await conn.execute("DELETE FROM memory_writes WHERE tenant_id = $1", tenant_id)
+            result = await conn.execute("DELETE FROM projects WHERE tenant_id = $1", tenant_id)
+    return _command_succeeded(result)
+
+
+async def get_api_key_owner(pool: Pool, key_id: UUID) -> dict[str, Any] | None:
+    """Minimal metadata for any key by id, regardless of owner (admin lookup)."""
+    row = await pool.fetchrow(
+        "SELECT id, tenant_id, user_id, name, revoked_at FROM api_keys WHERE id = $1",
+        key_id,
+    )
+    return dict(row) if row else None

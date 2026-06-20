@@ -121,5 +121,23 @@ class GraphStore(ABC):
         """Delete everything written by a given memory. Returns True if anything was deleted."""
 
     @abstractmethod
+    async def graph_stats(self, tenant_id: str) -> tuple[int, int]:
+        """Return (entity_count, relation_count) for a tenant's graph.
+
+        Addresses a tenant directly by id (like `get_entity`/`delete_memory`),
+        for the operator admin view's per-project live stats. Returns (0, 0)
+        for a tenant whose graph has never been written to.
+        """
+
+    @abstractmethod
+    async def drop_graph(self, tenant_id: str) -> None:
+        """Delete a tenant's entire graph (all entities, relations, indices).
+
+        Destructive and not scoped -- used only by the operator admin "wipe
+        tenant" path. Idempotent: dropping an already-empty/absent graph is a
+        no-op, not an error.
+        """
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """Return True if the underlying graph store is reachable."""

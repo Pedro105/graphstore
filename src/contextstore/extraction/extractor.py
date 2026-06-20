@@ -42,20 +42,38 @@ def _build_user_message(content: str, existing_relation_types: list[str] | None)
     return context + content
 
 
+def _total_tokens(completion: object) -> int:
+    """Total (input + output) tokens from a raw Anthropic completion, or 0 if
+    usage isn't present. Defensive: the value feeds usage accounting only, so a
+    missing/oddly-shaped usage object must never break extraction."""
+    usage = getattr(completion, "usage", None)
+    if usage is None:
+        return 0
+    return int(getattr(usage, "input_tokens", 0) or 0) + int(
+        getattr(usage, "output_tokens", 0) or 0
+    )
+
+
 async def extract(
     content: str, existing_relation_types: list[str] | None = None
-) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
+) -> tuple[list[ExtractedEntity], list[ExtractedRelation], int]:
+    """Extract entities and relations from `content`, returning them plus the
+    total tokens the extraction LLM call consumed (for usage accounting). The
+    token count is surfaced here rather than swallowed so the write path can log
+    it; it does not affect extraction behaviour."""
     settings = get_settings()
     client = instructor.from_anthropic(
         anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
     )
 
-    result = await client.chat.completions.create(
+    result, completion = await client.chat.completions.create_with_completion(
         model=settings.extraction_model,
         max_tokens=4096,
         system=EXTRACTION_SYSTEM_PROMPT,
         response_model=ExtractionResult,
-        messages=[{"role": "user", "content": _build_user_message(content, existing_relation_types)}],
+        messages=[
+            {"role": "user", "content": _build_user_message(content, existing_relation_types)}
+        ],
     )
 
-    return result.entities, result.relations
+    return result.entities, result.relations, _total_tokens(completion)

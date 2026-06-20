@@ -55,7 +55,7 @@ async def test_dependency_raises_429_with_retry_after(monkeypatch):
     # Isolate from the process-wide limiter so other tests don't interfere.
     monkeypatch.setattr(ratelimit, "_limiter", SlidingWindowRateLimiter(window_seconds=60.0))
     dependency = rate_limited("/v1/recall", lambda: 1)
-    auth = AuthContext(tenant_id="acme", api_key_id=uuid4())
+    auth = AuthContext(tenant_id="acme", api_key_id=uuid4(), user_id=uuid4())
 
     # First call is within the limit and returns the AuthContext untouched.
     assert await dependency(auth=auth) is auth

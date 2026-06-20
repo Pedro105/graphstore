@@ -69,7 +69,7 @@ async def test_remember_then_recall_resolves_entities_across_facts(graph_store, 
     written_memories = []
     try:
         for fact in facts:
-            memory = await remember(
+            memory, _tokens = await remember(
                 content=fact,
                 scope=scope,
                 source="e2e_test",

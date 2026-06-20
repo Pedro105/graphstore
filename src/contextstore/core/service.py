@@ -78,12 +78,17 @@ async def remember(
     embedding_provider: EmbeddingProvider,
     confidence: float = 1.0,
     evidence: list[str] | None = None,
-) -> Memory:
+) -> tuple[Memory, int]:
+    """Extract -> resolve -> write one memory. Returns the persisted Memory and
+    the number of tokens the extraction LLM call consumed (surfaced for usage
+    accounting at the API boundary; 0 if the provider reported none)."""
     settings = get_settings()
     await graph_store.ensure_graph_initialized(scope.tenant_id, settings.embedding_dimension)
 
     existing_relation_types = await _existing_relation_types(scope, graph_store)
-    extracted_entities, extracted_relations = await extract(content, existing_relation_types)
+    extracted_entities, extracted_relations, tokens_used = await extract(
+        content, existing_relation_types
+    )
     provenance = Provenance(source=source, confidence=confidence, evidence=evidence)
 
     resolved_by_name: dict[str, Entity] = {}
@@ -122,7 +127,7 @@ async def remember(
         provenance=provenance,
     )
     await graph_store.write_memory(memory)
-    return memory
+    return memory, tokens_used
 
 
 async def _seed_entities(

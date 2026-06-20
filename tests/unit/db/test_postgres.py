@@ -11,9 +11,14 @@ from uuid import uuid4
 from contextstore.db import postgres
 
 
-def _key_row(api_key_id, tenant_id, raw_key):
+def _key_row(api_key_id, tenant_id, raw_key, user_id=None):
     """A fake api_keys row as asyncpg would return it (mapping access by key)."""
-    return {"id": api_key_id, "tenant_id": tenant_id, "key_hash": postgres.hash_key(raw_key)}
+    return {
+        "id": api_key_id,
+        "tenant_id": tenant_id,
+        "user_id": user_id or uuid4(),
+        "key_hash": postgres.hash_key(raw_key),
+    }
 
 
 def test_generate_api_key_has_prefix_and_entropy():
