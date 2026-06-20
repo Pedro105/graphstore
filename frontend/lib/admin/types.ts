@@ -63,3 +63,84 @@ export interface AdminUsageRow {
   tokens_used: number | null;
   created_at: string;
 }
+
+// --- Analytics (admin overview charts) ---
+
+export interface WritePoint {
+  day: string;
+  count: number;
+}
+
+export interface TokenPoint {
+  day: string;
+  tokens: number;
+}
+
+export interface LatencyPoint {
+  day: string;
+  count: number;
+  p50: number | null;
+  p95: number | null;
+}
+
+export interface ClassCount {
+  query_class: string;
+  count: number;
+}
+
+export interface TopProject {
+  tenant_id: string;
+  name: string | null;
+  writes: number;
+  recalls: number;
+  total: number;
+}
+
+export interface Analytics {
+  writes_over_time: WritePoint[];
+  tokens_over_time: TokenPoint[];
+  recall_latency: LatencyPoint[];
+  query_class_breakdown: ClassCount[];
+  top_projects: TopProject[];
+}
+
+// --- Per-project sources breakdown ---
+
+export interface ProjectSource {
+  source: string;
+  write_count: number;
+  entities: number;
+  relations: number;
+  last_activity_at: string;
+}
+
+// --- Facts table ---
+
+export interface Fact {
+  tenant_id: string;
+  entity_id: string;
+  entity_name: string;
+  entity_type: string;
+  property_name: string | null;
+  value: unknown;
+  source: string;
+  asserted_at: string;
+  superseded: boolean;
+}
+
+export interface FactsResponse {
+  facts: Fact[];
+  total: number;
+  page: number;
+  page_size: number;
+  truncated: boolean;
+}
+
+export interface FactsQuery {
+  tenant_id?: string;
+  source?: string;
+  include_superseded?: boolean;
+  q?: string;
+  page?: number;
+  page_size?: number;
+}

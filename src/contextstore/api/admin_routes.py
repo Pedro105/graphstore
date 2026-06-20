@@ -14,7 +14,7 @@ wiping a tenant requires a typed confirmation and is logged loudly.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -27,7 +27,14 @@ from contextstore.api.dependencies import GraphStoreDep
 from contextstore.api.routes import GraphSnapshot
 from contextstore.db import postgres
 from contextstore.models.claim import Claim
+from contextstore.models.fact import Fact
 from contextstore.models.scope import Scope
+
+# Facts table: hard cap on graph nodes scanned per request, so a flat
+# cross-project read stays bounded in time and memory even on a large graph.
+# The store paginates at the node level; this caps how many pages are pulled.
+_FACTS_MAX_SCAN_NODES = 2000
+_FACTS_NODE_PAGE = 200
 
 logger = structlog.get_logger()
 
@@ -195,6 +202,173 @@ async def list_usage(
     first, with token counts and endpoint for cost breakdowns."""
     rows = await postgres.list_usage(db, tenant_id, limit)
     return [AdminUsageRow(**row) for row in rows]
+
+
+# --- Read: time-series analytics & breakdowns --------------------------------
+
+
+class WritePoint(BaseModel):
+    day: date
+    count: int
+
+
+class TokenPoint(BaseModel):
+    day: date
+    tokens: int
+
+
+class LatencyPoint(BaseModel):
+    day: date
+    count: int
+    p50: int | None
+    p95: int | None
+
+
+class ClassCount(BaseModel):
+    query_class: str
+    count: int
+
+
+class TopProject(BaseModel):
+    tenant_id: str
+    name: str | None
+    writes: int
+    recalls: int
+    total: int
+
+
+class AnalyticsResponse(BaseModel):
+    """Everything the admin overview's charts need, in one round trip."""
+
+    writes_over_time: list[WritePoint]
+    tokens_over_time: list[TokenPoint]
+    recall_latency: list[LatencyPoint]
+    query_class_breakdown: list[ClassCount]
+    top_projects: list[TopProject]
+
+
+@router.get("/analytics", response_model=AnalyticsResponse)
+async def get_analytics(
+    db: DbDep,
+    days: int = Query(default=30, ge=1, le=365),
+    top_days: int = Query(default=7, ge=1, le=365),
+) -> AnalyticsResponse:
+    """Cross-tenant time series (writes, token spend, recall latency p50/p95)
+    over `days`, plus the last-`top_days` query-class breakdown and most-active
+    projects."""
+    writes, tokens, latency, classes, top = await asyncio.gather(
+        postgres.writes_over_time(db, days),
+        postgres.tokens_over_time(db, days),
+        postgres.recall_latency_over_time(db, days),
+        postgres.query_class_breakdown(db, top_days),
+        postgres.top_projects_by_activity(db, top_days),
+    )
+    return AnalyticsResponse(
+        writes_over_time=[WritePoint(**r) for r in writes],
+        tokens_over_time=[TokenPoint(**r) for r in tokens],
+        recall_latency=[LatencyPoint(**r) for r in latency],
+        query_class_breakdown=[ClassCount(**r) for r in classes],
+        top_projects=[TopProject(**r) for r in top],
+    )
+
+
+class ProjectSource(BaseModel):
+    source: str
+    write_count: int
+    entities: int
+    relations: int
+    last_activity_at: datetime
+
+
+@router.get("/projects/{tenant_id}/sources", response_model=list[ProjectSource])
+async def get_project_sources(tenant_id: str, db: DbDep) -> list[ProjectSource]:
+    """Per-source write breakdown for one project -- which agents wrote, how much,
+    and when last. The multi-agent provenance view."""
+    rows = await postgres.project_sources(db, tenant_id)
+    return [ProjectSource(**r) for r in rows]
+
+
+# --- Read: flat facts table across projects ----------------------------------
+
+
+class FactsResponse(BaseModel):
+    facts: list[Fact]
+    total: int  # post-filter row count for the current scope (this page's basis)
+    page: int
+    page_size: int
+    # True when the node-scan cap was hit before the scope was exhausted, so the
+    # table may be missing facts from beyond the cap (large-graph safety valve).
+    truncated: bool
+
+
+async def _gather_facts(graph_store: GraphStoreDep, tenants: list[str]) -> tuple[list[Fact], bool]:
+    """Flatten entity claims across `tenants`, walking the store's node-level
+    pages and stopping at the global node-scan cap. Bounded memory: never loads
+    a whole graph, never exceeds `_FACTS_MAX_SCAN_NODES` nodes."""
+    facts: list[Fact] = []
+    scanned = 0
+    for tenant_id in tenants:
+        offset = 0
+        while scanned < _FACTS_MAX_SCAN_NODES:
+            page, total_nodes = await graph_store.fetch_entity_claims_page(
+                tenant_id, offset, _FACTS_NODE_PAGE
+            )
+            facts.extend(page)
+            offset += _FACTS_NODE_PAGE
+            scanned += _FACTS_NODE_PAGE
+            if offset >= total_nodes:
+                break
+        if scanned >= _FACTS_MAX_SCAN_NODES:
+            return facts, True
+    return facts, False
+
+
+@router.get("/facts", response_model=FactsResponse)
+async def list_facts(
+    db: DbDep,
+    graph_store: GraphStoreDep,
+    tenant_id: str | None = Query(default=None, description="Limit to one project."),
+    source: str | None = Query(default=None, description="Limit to one source value."),
+    include_superseded: bool = Query(default=False, description="Include superseded claims."),
+    q: str | None = Query(default=None, description="Substring match on entity name or value."),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+) -> FactsResponse:
+    """A flat, searchable table of every claim across projects -- entity,
+    property, value, source, project, asserted-at, and active/superseded.
+
+    Reads claims off the graph (node-level paginated, capped), then filters,
+    sorts by recency, and paginates the resulting rows. With a `tenant_id` the
+    scan is one project; without it, all projects (bounded by the node cap)."""
+    if tenant_id is not None:
+        tenants = [tenant_id]
+    else:
+        tenants = [p["tenant_id"] for p in await postgres.list_all_projects(db)]
+
+    facts, truncated = await _gather_facts(graph_store, tenants)
+
+    # Claim-level filters (applied to the flattened rows, not the nodes).
+    if not include_superseded:
+        facts = [f for f in facts if not f.superseded]
+    if source is not None:
+        facts = [f for f in facts if f.source == source]
+    if q:
+        needle = q.lower()
+        facts = [
+            f for f in facts if needle in f.entity_name.lower() or needle in str(f.value).lower()
+        ]
+
+    facts.sort(key=lambda f: f.asserted_at, reverse=True)  # recency
+
+    total = len(facts)
+    start = (page - 1) * page_size
+    return FactsResponse(
+        facts=facts[start : start + page_size],
+        total=total,
+        page=page,
+        page_size=page_size,
+        truncated=truncated,
+    )
 
 
 # --- Destructive: delete one audit row, wipe a tenant, revoke any key --------

@@ -1,13 +1,25 @@
 """API-key authentication and the admin-token guard.
 
 Every `/v1/` data route depends on `require_api_key`, which resolves the
-`Authorization: Bearer <key>` header to a tenant via Postgres. tenant_id is
-*never* read from the request body -- it is authoritative from the key lookup,
-which is what makes tenant isolation enforceable rather than advisory (see
-docs/decisions/0002-graph-per-tenant-isolation.md).
+`Authorization: Bearer <key>` header to an identity (user + the key's bound
+tenant) via Postgres. The tenant is *never* taken from a request body, and the
+key proves the user -- this is what makes tenant isolation enforceable rather
+than advisory (see docs/decisions/0002-graph-per-tenant-isolation.md).
+
+Multi-project access: a request may target one of the authenticated user's
+*other* projects via an `X-Project: <tenant_id>` header (the dashboard's
+workspace switcher uses this). This is NOT a softening of isolation -- the
+header is not a secret and is never trusted on its own. `require_api_key`
+verifies, server-side and on every request, that the calling user *owns* the
+named project before overriding the tenant for that request; a non-owner (or a
+nonexistent project) fails closed with 403 and never falls back to anything.
+The boundary is identical to before: the key proves the user, and the user must
+own whatever project the request acts on.
 
 The operator-only `/v1/keys` endpoints use `require_admin` (a shared admin
 token) instead, since they mint/revoke the very keys the data routes check.
+The `/v1/admin/*` namespace likewise uses `require_admin`, so X-Project never
+applies there.
 """
 
 import secrets
@@ -70,10 +82,21 @@ def _bearer_token(authorization: str | None) -> str:
 
 async def require_api_key(
     authorization: str | None = Header(default=None),
+    x_project: str | None = Header(default=None, alias="X-Project"),
     db: Pool = Depends(get_db),
 ) -> AuthContext:
     """Resolve the Bearer API key to an AuthContext, or 401 if missing,
-    malformed, invalid, or revoked."""
+    malformed, invalid, or revoked.
+
+    If an `X-Project` header is present and names a project other than the key's
+    own tenant, the calling user's ownership of it is verified here -- once, on
+    this request, with no cached result -- and the tenant is overridden only on
+    success. A project the user does not own (or one that does not exist) is
+    rejected with 403; the request never falls back to the key's tenant. This
+    runs at the auth layer so it applies uniformly to every data route, and the
+    same 403 is returned whether the project is unowned or absent, so the
+    response never reveals whether a given project id exists.
+    """
     token = _bearer_token(authorization)
     resolved = await postgres.resolve_api_key(db, token)
     if resolved is None:
@@ -82,8 +105,22 @@ async def require_api_key(
             detail="Invalid or revoked API key.",
             headers=_BEARER_CHALLENGE,
         )
+
+    tenant_id = resolved.tenant_id
+    # Project override: only when the header names a *different* project than the
+    # key's own tenant (selecting your own tenant needs no extra check -- the key
+    # already proves it). Ownership is the entire boundary; fail closed on miss.
+    if x_project is not None and x_project != resolved.tenant_id:
+        project = await postgres.get_project_for_user(db, x_project, resolved.user_id)
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Project not found or not owned by the authenticated user.",
+            )
+        tenant_id = x_project
+
     return AuthContext(
-        tenant_id=resolved.tenant_id,
+        tenant_id=tenant_id,
         api_key_id=resolved.api_key_id,
         user_id=resolved.user_id,
     )

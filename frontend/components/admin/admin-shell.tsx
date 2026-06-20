@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
-import { Activity, FolderTree, LayoutDashboard, LogOut } from "lucide-react";
+import {
+  Activity,
+  FolderTree,
+  LayoutDashboard,
+  LogOut,
+  Table2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useAdminAuth } from "@/lib/admin/auth";
@@ -13,6 +19,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/projects", label: "Projects", icon: FolderTree },
+  { href: "/admin/facts", label: "Facts", icon: Table2 },
   { href: "/admin/usage", label: "Usage", icon: Activity },
 ];
 

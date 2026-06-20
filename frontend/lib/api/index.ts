@@ -40,3 +40,5 @@ export {
   deleteFocusArea,
 } from "@/lib/api/focus-areas";
 export { listApiKeys, deleteApiKey } from "@/lib/api/api-keys";
+export { listProjects, createProject } from "@/lib/api/projects";
+export type { Project, CreateProjectInput } from "@/lib/api/projects";

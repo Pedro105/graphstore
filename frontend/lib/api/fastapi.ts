@@ -3,6 +3,7 @@
 // this Next.js app's own /api/* routes, and the API key below never leaves
 // the server (no NEXT_PUBLIC_ prefix).
 
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 // CONTEXTSTORE_API_URL is the new name; FASTAPI_BASE_URL is still honoured as a
@@ -14,14 +15,30 @@ export const CONTEXTSTORE_API_URL =
 
 const API_KEY = process.env.CONTEXTSTORE_API_KEY;
 
+// The workspace switcher stores the selected project's tenant_id here. It is
+// NOT a secret -- a tenant_id is just an identifier, and the backend re-verifies
+// on every request that the key's user actually owns it (returning 403
+// otherwise). Sent as the X-Project header so the data routes act on the
+// selected project instead of the key's default tenant.
+export const ACTIVE_PROJECT_COOKIE = "cs_active_project";
+
 export async function forwardToFastapi(
   path: string,
   init?: RequestInit,
+  // Project-scoped data routes (remember/recall/graph/agents/keys) carry the
+  // selected project; user-scoped routes (the projects list/create proxy) pass
+  // false so a stale cookie can never 403 the very call used to recover from it.
+  attachProject = true,
 ): Promise<Response> {
-  // Attach the API key as a Bearer token server-side. The backend derives
-  // tenant_id from it, so route handlers never send a tenant_id/scope.
+  // Attach the API key as a Bearer token server-side. The backend derives the
+  // user (and the key's default tenant) from it; the X-Project header below
+  // selects which of that user's projects to act on, ownership-checked server-side.
   const headers = new Headers(init?.headers);
   if (API_KEY) headers.set("Authorization", `Bearer ${API_KEY}`);
+  if (attachProject) {
+    const active = (await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value;
+    if (active) headers.set("X-Project", active);
+  }
   return fetch(`${CONTEXTSTORE_API_URL}${path}`, { ...init, headers });
 }
 

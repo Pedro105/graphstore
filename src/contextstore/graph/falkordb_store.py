@@ -58,6 +58,7 @@ from redis.exceptions import ResponseError
 
 from contextstore.models.claim import Claim, apply_claim, derive_active_view
 from contextstore.models.entity import Entity
+from contextstore.models.fact import Fact
 from contextstore.models.memory import Memory
 from contextstore.models.provenance import Provenance
 from contextstore.models.relation import Relation
@@ -503,6 +504,50 @@ class FalkorDBGraphStore(GraphStore):
         node_count = int(nodes.result_set[0][0]) if nodes.result_set else 0
         edge_count = int(edges.result_set[0][0]) if edges.result_set else 0
         return (node_count, edge_count)
+
+    async def fetch_entity_claims_page(
+        self, tenant_id: str, offset: int, limit: int
+    ) -> tuple[list[Fact], int]:
+        graph = self._graph_for(tenant_id)
+        try:
+            total_result = await graph.query("MATCH (n:Entity) RETURN count(n)")
+        except ResponseError:
+            # Graph key doesn't exist yet (nothing ever written for this tenant).
+            return ([], 0)
+        total = int(total_result.result_set[0][0]) if total_result.result_set else 0
+        if total == 0:
+            return ([], total)
+
+        result = await graph.query(
+            "MATCH (n:Entity) "
+            "RETURN n.id, n.name, n.entity_type, n.claims_json "
+            "ORDER BY n.id SKIP $offset LIMIT $limit",
+            {"offset": int(offset), "limit": int(limit)},
+        )
+
+        facts: list[Fact] = []
+        for node_id, name, entity_type, claims_json in result.result_set:
+            claims = _claims_from_json(claims_json or "[]")
+            superseded_ids = {
+                UUID(claim_id)
+                for claim in claims
+                for claim_id in (claim.provenance.supersedes or [])
+            }
+            for claim in claims:
+                facts.append(
+                    Fact(
+                        tenant_id=tenant_id,
+                        entity_id=UUID(node_id),
+                        entity_name=name,
+                        entity_type=entity_type,
+                        property_name=claim.property_name,
+                        value=claim.value,
+                        source=claim.provenance.source,
+                        asserted_at=claim.provenance.created_at,
+                        superseded=claim.id in superseded_ids,
+                    )
+                )
+        return (facts, total)
 
     async def drop_graph(self, tenant_id: str) -> None:
         graph = self._graph_for(tenant_id)

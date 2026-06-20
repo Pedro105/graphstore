@@ -88,6 +88,26 @@ async def test_list_projects_for_user_is_owner_scoped():
     assert pool.fetch.await_args.args[1] == owner
 
 
+async def test_get_project_for_user_filters_on_tenant_and_owner():
+    pool = AsyncMock()
+    owner = uuid4()
+    pool.fetchrow.return_value = {"tenant_id": "alpha", "owner_user_id": owner, "name": "Alpha"}
+
+    project = await postgres.get_project_for_user(pool, "alpha", owner)
+    assert project is not None and project["tenant_id"] == "alpha"
+    query = pool.fetchrow.await_args.args[0]
+    # The ownership boundary: BOTH the tenant and the owner are in the WHERE.
+    assert "tenant_id = $1" in query and "owner_user_id = $2" in query
+    assert pool.fetchrow.await_args.args[1] == "alpha"
+    assert pool.fetchrow.await_args.args[2] == owner
+
+
+async def test_get_project_for_user_returns_none_when_not_owned():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = None  # no row matches tenant+owner
+    assert await postgres.get_project_for_user(pool, "someone_elses", uuid4()) is None
+
+
 async def test_record_memory_write_never_raises():
     pool = AsyncMock()
     pool.execute.side_effect = RuntimeError("db down")
@@ -157,6 +177,74 @@ async def test_list_usage_filters_by_tenant_when_given():
     await postgres.list_usage(pool, tenant_id=None, limit=10)
     # No tenant filter when not scoped.
     assert "WHERE tenant_id" not in pool.fetch.await_args.args[0]
+
+
+async def test_writes_over_time_groups_by_day_within_window():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"day": "2026-06-19", "count": 4}]
+    rows = await postgres.writes_over_time(pool, days=30)
+    assert rows[0]["count"] == 4
+    query = pool.fetch.await_args.args[0]
+    assert "date_trunc('day'" in query and "make_interval(days => $1)" in query
+    assert "FROM memory_writes" in query
+    assert pool.fetch.await_args.args[1] == 30
+
+
+async def test_tokens_over_time_sums_tokens():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"day": "2026-06-19", "tokens": 1200}]
+    await postgres.tokens_over_time(pool, days=7)
+    query = pool.fetch.await_args.args[0]
+    assert "SUM(tokens_used)" in query and "FROM usage_log" in query
+
+
+async def test_recall_latency_uses_percentiles_on_recall_rows_only():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"day": "2026-06-19", "count": 10, "p50": 42, "p95": 90}]
+    rows = await postgres.recall_latency_over_time(pool, days=30)
+    assert rows[0]["p95"] == 90
+    query = pool.fetch.await_args.args[0]
+    assert "percentile_cont(0.5)" in query and "percentile_cont(0.95)" in query
+    assert "latency_ms IS NOT NULL" in query  # recall rows only
+
+
+async def test_query_class_breakdown_counts_by_class():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"query_class": "single_hop", "count": 5}]
+    await postgres.query_class_breakdown(pool, days=7)
+    query = pool.fetch.await_args.args[0]
+    assert "GROUP BY query_class" in query and "query_class IS NOT NULL" in query
+
+
+async def test_top_projects_splits_writes_and_recalls():
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {"tenant_id": "alpha", "name": "Alpha", "writes": 3, "recalls": 7, "total": 10}
+    ]
+    rows = await postgres.top_projects_by_activity(pool, days=7)
+    assert rows[0]["writes"] == 3 and rows[0]["recalls"] == 7
+    query = pool.fetch.await_args.args[0]
+    assert "FILTER (WHERE u.endpoint = '/v1/memories')" in query
+    assert "FILTER (WHERE u.endpoint = '/v1/recall')" in query
+    assert "LEFT JOIN projects" in query
+
+
+async def test_project_sources_groups_by_source_with_recency():
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {
+            "source": "agent_a",
+            "write_count": 9,
+            "entities": 12,
+            "relations": 4,
+            "last_activity_at": "t0",
+        }
+    ]
+    rows = await postgres.project_sources(pool, "alpha")
+    assert rows[0]["source"] == "agent_a" and rows[0]["write_count"] == 9
+    query = pool.fetch.await_args.args[0]
+    assert "GROUP BY source" in query and "MAX(created_at)" in query
+    assert pool.fetch.await_args.args[1] == "alpha"
 
 
 async def test_delete_project_cascade_deletes_in_fk_safe_order():

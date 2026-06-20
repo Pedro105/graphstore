@@ -27,6 +27,7 @@ from contextstore.db import postgres
 from contextstore.graph.store import GraphStore
 from contextstore.models.claim import Claim
 from contextstore.models.entity import Entity
+from contextstore.models.fact import Fact
 from contextstore.models.provenance import Provenance
 from contextstore.models.scope import Scope
 
@@ -236,3 +237,137 @@ def test_revoke_any_key_404_when_absent(client, monkeypatch):
     monkeypatch.setattr(postgres, "revoke_api_key", AsyncMock(return_value=False))
     resp = client.delete(f"/v1/admin/api-keys/{uuid4()}", headers=ADMIN_HEADERS)
     assert resp.status_code == 404
+
+
+# --- Analytics & sources -----------------------------------------------------
+
+
+def test_analytics_composes_all_series(client, monkeypatch):
+    monkeypatch.setattr(
+        postgres, "writes_over_time", AsyncMock(return_value=[{"day": "2026-06-19", "count": 4}])
+    )
+    monkeypatch.setattr(
+        postgres, "tokens_over_time", AsyncMock(return_value=[{"day": "2026-06-19", "tokens": 99}])
+    )
+    monkeypatch.setattr(
+        postgres,
+        "recall_latency_over_time",
+        AsyncMock(return_value=[{"day": "2026-06-19", "count": 2, "p50": 40, "p95": 88}]),
+    )
+    monkeypatch.setattr(
+        postgres,
+        "query_class_breakdown",
+        AsyncMock(return_value=[{"query_class": "single_hop", "count": 2}]),
+    )
+    monkeypatch.setattr(
+        postgres,
+        "top_projects_by_activity",
+        AsyncMock(
+            return_value=[
+                {"tenant_id": "alpha", "name": "Alpha", "writes": 1, "recalls": 1, "total": 2}
+            ]
+        ),
+    )
+    resp = client.get("/v1/admin/analytics", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["writes_over_time"][0]["count"] == 4
+    assert body["tokens_over_time"][0]["tokens"] == 99
+    assert body["recall_latency"][0]["p95"] == 88
+    assert body["query_class_breakdown"][0]["query_class"] == "single_hop"
+    assert body["top_projects"][0]["total"] == 2
+
+
+def test_project_sources_breakdown(client, pool):
+    pool.fetch.return_value = [
+        {
+            "source": "agent_a",
+            "write_count": 9,
+            "entities": 12,
+            "relations": 4,
+            "last_activity_at": datetime.now(UTC),
+        }
+    ]
+    resp = client.get("/v1/admin/projects/alpha/sources", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    assert resp.json()[0]["source"] == "agent_a"
+
+
+# --- Facts table -------------------------------------------------------------
+
+
+def _fact(name, value, source, day, superseded=False):
+    return Fact(
+        tenant_id="alpha",
+        entity_id=uuid4(),
+        entity_name=name,
+        entity_type="org",
+        property_name="price",
+        value=value,
+        source=source,
+        asserted_at=datetime(2026, day, 1, tzinfo=UTC),
+        superseded=superseded,
+    )
+
+
+@pytest.fixture
+def facts_client(client, graph_store):
+    # One page of facts; total_nodes small so the gather loop stops after one page.
+    facts = [
+        _fact("Globex", "100", "agent_v1", 1, superseded=True),
+        _fact("Globex", "120", "agent_v2", 3, superseded=False),
+        _fact("Acme", "manufacturing", "agent_v1", 2, superseded=False),
+    ]
+    graph_store.fetch_entity_claims_page.return_value = (facts, 3)
+    return client
+
+
+def test_facts_default_hides_superseded(facts_client):
+    resp = facts_client.get("/v1/admin/facts?tenant_id=alpha", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    values = [f["value"] for f in body["facts"]]
+    assert "100" not in values  # the superseded claim is hidden by default
+    assert body["total"] == 2
+
+
+def test_facts_include_superseded_toggle(facts_client):
+    resp = facts_client.get(
+        "/v1/admin/facts?tenant_id=alpha&include_superseded=true", headers=ADMIN_HEADERS
+    )
+    body = resp.json()
+    assert body["total"] == 3
+    assert any(f["value"] == "100" and f["superseded"] for f in body["facts"])
+
+
+def test_facts_sorted_by_recency(facts_client):
+    resp = facts_client.get(
+        "/v1/admin/facts?tenant_id=alpha&include_superseded=true", headers=ADMIN_HEADERS
+    )
+    days = [f["asserted_at"][:7] for f in resp.json()["facts"]]
+    assert days == sorted(days, reverse=True)  # newest first
+
+
+def test_facts_filter_by_source(facts_client):
+    resp = facts_client.get(
+        "/v1/admin/facts?tenant_id=alpha&source=agent_v2", headers=ADMIN_HEADERS
+    )
+    body = resp.json()
+    assert body["total"] == 1 and body["facts"][0]["source"] == "agent_v2"
+
+
+def test_facts_substring_search(facts_client):
+    resp = facts_client.get(
+        "/v1/admin/facts?tenant_id=alpha&q=acme&include_superseded=true", headers=ADMIN_HEADERS
+    )
+    body = resp.json()
+    assert body["total"] == 1 and body["facts"][0]["entity_name"] == "Acme"
+
+
+def test_facts_pagination(facts_client):
+    resp = facts_client.get(
+        "/v1/admin/facts?tenant_id=alpha&include_superseded=true&page=1&page_size=2",
+        headers=ADMIN_HEADERS,
+    )
+    body = resp.json()
+    assert len(body["facts"]) == 2 and body["total"] == 3 and body["page"] == 1

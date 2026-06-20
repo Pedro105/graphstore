@@ -8,8 +8,12 @@ import type {
   AdminProject,
   AdminUsageRow,
   AdminUser,
+  Analytics,
   EntityClaims,
+  FactsQuery,
+  FactsResponse,
   GraphSnapshot,
+  ProjectSource,
 } from "@/lib/admin/types";
 
 export class AdminApiError extends Error {
@@ -81,6 +85,21 @@ export const adminApi = {
       `/usage${tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : ""}`,
       token,
     ),
+  analytics: (token: string, days = 30) =>
+    adminFetch<Analytics>(`/analytics?days=${days}`, token),
+  projectSources: (token: string, tenantId: string) =>
+    adminFetch<ProjectSource[]>(`/projects/${tenantId}/sources`, token),
+  facts: (token: string, query: FactsQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.tenant_id) params.set("tenant_id", query.tenant_id);
+    if (query.source) params.set("source", query.source);
+    if (query.include_superseded) params.set("include_superseded", "true");
+    if (query.q) params.set("q", query.q);
+    if (query.page) params.set("page", String(query.page));
+    if (query.page_size) params.set("page_size", String(query.page_size));
+    const qs = params.toString();
+    return adminFetch<FactsResponse>(`/facts${qs ? `?${qs}` : ""}`, token);
+  },
   deleteMemoryWrite: (token: string, tenantId: string, memoryWriteId: string) =>
     adminFetch<void>(`/projects/${tenantId}/memories/${memoryWriteId}`, token, {
       method: "DELETE",

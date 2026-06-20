@@ -102,17 +102,25 @@ async def log_usage(
     tenant_id: str,
     endpoint: str,
     tokens_used: int | None = None,
+    latency_ms: int | None = None,
+    query_class: str | None = None,
 ) -> None:
     """Fire-and-forget usage record. Never raises -- usage accounting must not
-    be able to fail a request."""
+    be able to fail a request.
+
+    `latency_ms`/`query_class` are recall-only (from RetrievalStats); the write
+    path leaves them None. They feed the admin latency/query-class analytics."""
     try:
         await pool.execute(
-            "INSERT INTO usage_log (api_key_id, tenant_id, endpoint, tokens_used) "
-            "VALUES ($1, $2, $3, $4)",
+            "INSERT INTO usage_log "
+            "(api_key_id, tenant_id, endpoint, tokens_used, latency_ms, query_class) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
             api_key_id,
             tenant_id,
             endpoint,
             tokens_used,
+            latency_ms,
+            query_class,
         )
     except Exception as exc:
         logger.warning("usage_log.insert_failed", endpoint=endpoint, error=str(exc))
@@ -281,6 +289,26 @@ async def get_project_by_tenant(pool: Pool, tenant_id: str) -> dict[str, Any] | 
     return dict(row) if row else None
 
 
+async def get_project_for_user(
+    pool: Pool, tenant_id: str, owner_user_id: UUID
+) -> dict[str, Any] | None:
+    """The project with this tenant_id, but only if `owner_user_id` owns it.
+
+    The ownership gate for the X-Project request override (api/auth.py): the
+    single WHERE clause filtering on BOTH tenant_id and owner_user_id is the
+    whole security boundary -- it returns a row only when the authenticated user
+    actually owns the requested project, so a non-owner (or a nonexistent
+    project) is indistinguishable here, both yielding None. Callers must treat
+    None as "deny" (403), never as a reason to fall back to another tenant."""
+    row = await pool.fetchrow(
+        "SELECT tenant_id, owner_user_id, name FROM projects "
+        "WHERE tenant_id = $1 AND owner_user_id = $2",
+        tenant_id,
+        owner_user_id,
+    )
+    return dict(row) if row else None
+
+
 # --- Memory write audit log (raw content the graph engine discards) ----------
 
 
@@ -380,6 +408,98 @@ async def list_usage(
             "FROM usage_log ORDER BY created_at DESC LIMIT $1",
             limit,
         )
+    return [dict(row) for row in rows]
+
+
+# --- Operator admin: time-series & breakdown analytics ----------------------
+#
+# All grouped by day in UTC via date_trunc; the "last N days" window uses
+# make_interval so the period is a bound parameter, not string-built SQL.
+
+
+async def writes_over_time(pool: Pool, days: int = 30) -> list[dict[str, Any]]:
+    """Daily count of memory writes over the last `days` days (newest last)."""
+    rows = await pool.fetch(
+        "SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS count "
+        "FROM memory_writes WHERE created_at >= NOW() - make_interval(days => $1) "
+        "GROUP BY day ORDER BY day",
+        days,
+    )
+    return [dict(row) for row in rows]
+
+
+async def tokens_over_time(pool: Pool, days: int = 30) -> list[dict[str, Any]]:
+    """Daily sum of tokens_used (LLM spend) over the last `days` days."""
+    rows = await pool.fetch(
+        "SELECT date_trunc('day', created_at)::date AS day, "
+        "COALESCE(SUM(tokens_used), 0)::bigint AS tokens "
+        "FROM usage_log WHERE created_at >= NOW() - make_interval(days => $1) "
+        "GROUP BY day ORDER BY day",
+        days,
+    )
+    return [dict(row) for row in rows]
+
+
+async def recall_latency_over_time(pool: Pool, days: int = 30) -> list[dict[str, Any]]:
+    """Daily recall latency p50/p95 (and count) over the last `days` days.
+
+    Only rows with a latency_ms (i.e. /v1/recall) participate; percentiles use
+    Postgres percentile_cont over the day's latencies."""
+    rows = await pool.fetch(
+        "SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS count, "
+        "percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50, "
+        "percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95 "
+        "FROM usage_log "
+        "WHERE latency_ms IS NOT NULL AND created_at >= NOW() - make_interval(days => $1) "
+        "GROUP BY day ORDER BY day",
+        days,
+    )
+    return [dict(row) for row in rows]
+
+
+async def query_class_breakdown(pool: Pool, days: int = 7) -> list[dict[str, Any]]:
+    """Count of recalls per query_class over the last `days` days, busiest first."""
+    rows = await pool.fetch(
+        "SELECT query_class, COUNT(*) AS count FROM usage_log "
+        "WHERE query_class IS NOT NULL AND created_at >= NOW() - make_interval(days => $1) "
+        "GROUP BY query_class ORDER BY count DESC",
+        days,
+    )
+    return [dict(row) for row in rows]
+
+
+async def top_projects_by_activity(
+    pool: Pool, days: int = 7, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Most-active projects over the last `days` days, ranked by total requests,
+    split into writes vs recalls, with the project name joined in."""
+    rows = await pool.fetch(
+        "SELECT u.tenant_id, p.name, "
+        "COUNT(*) FILTER (WHERE u.endpoint = '/v1/memories') AS writes, "
+        "COUNT(*) FILTER (WHERE u.endpoint = '/v1/recall') AS recalls, "
+        "COUNT(*) AS total "
+        "FROM usage_log u LEFT JOIN projects p ON p.tenant_id = u.tenant_id "
+        "WHERE u.created_at >= NOW() - make_interval(days => $1) "
+        "GROUP BY u.tenant_id, p.name ORDER BY total DESC LIMIT $2",
+        days,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
+async def project_sources(pool: Pool, tenant_id: str) -> list[dict[str, Any]]:
+    """Per-source write breakdown for one project: which sources (agents) wrote,
+    how many writes each, and when each last wrote. The multi-agent provenance
+    view -- 'which of my agents is doing what'."""
+    rows = await pool.fetch(
+        "SELECT source, COUNT(*) AS write_count, "
+        "SUM(extracted_entity_count)::bigint AS entities, "
+        "SUM(extracted_relation_count)::bigint AS relations, "
+        "MAX(created_at) AS last_activity_at "
+        "FROM memory_writes WHERE tenant_id = $1 "
+        "GROUP BY source ORDER BY write_count DESC",
+        tenant_id,
+    )
     return [dict(row) for row in rows]
 
 

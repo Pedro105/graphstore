@@ -32,6 +32,10 @@ export default function AdminProjectDetailPage() {
     (t) => adminApi.projectMemories(t, tenantId),
     [tenantId],
   );
+  const sources = useAdminQuery(
+    (t) => adminApi.projectSources(t, tenantId),
+    [tenantId],
+  );
 
   const project = (projects.data ?? []).find((p) => p.tenant_id === tenantId);
 
@@ -114,6 +118,51 @@ export default function AdminProjectDetailPage() {
           }
         />
       </div>
+
+      {/* Sources: which agents wrote into this graph, and how much. */}
+      <Panel title="Sources (who wrote what)" className="mb-8">
+        {sources.loading ? (
+          <LoadingRow />
+        ) : sources.error ? (
+          <ErrorRow message={sources.error} />
+        ) : !sources.data || sources.data.length === 0 ? (
+          <EmptyRow>No writes recorded for this project yet.</EmptyRow>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-muted-foreground uppercase">
+              <tr className="border-b border-border">
+                <th className="px-4 py-2 font-medium">Source</th>
+                <th className="px-4 py-2 text-right font-medium">Writes</th>
+                <th className="px-4 py-2 text-right font-medium">Entities</th>
+                <th className="px-4 py-2 text-right font-medium">Relations</th>
+                <th className="px-4 py-2 font-medium">Last active</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sources.data.map((s) => (
+                <tr
+                  key={s.source}
+                  className="border-b border-border/50 last:border-0"
+                >
+                  <td className="px-4 py-2 font-mono text-xs">{s.source}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {s.write_count}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {s.entities}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {s.relations}
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-muted-foreground">
+                    {formatDate(s.last_activity_at)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
 
       {/* Raw memory writes: original content vs. what extraction produced. */}
       <Panel title="Recent memory writes" className="mb-8">

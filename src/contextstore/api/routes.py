@@ -174,7 +174,17 @@ async def recall_memories(
         max_entities=body.max_entities,
         synthesise=body.synthesise,
     )
-    await postgres.log_usage(db, auth.api_key_id, scope.tenant_id, "/v1/recall")
+    # Persist recall latency + the chosen query class (RetrievalStats is
+    # otherwise discarded after the response) so the admin analytics view can
+    # show p50/p95 latency trends and query-class breakdowns over time.
+    await postgres.log_usage(
+        db,
+        auth.api_key_id,
+        scope.tenant_id,
+        "/v1/recall",
+        latency_ms=round(result.stats.total_ms),
+        query_class=result.stats.query_class,
+    )
     return result
 
 

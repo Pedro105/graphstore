@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from contextstore.models.entity import Entity
+from contextstore.models.fact import Fact
 from contextstore.models.memory import Memory
 from contextstore.models.relation import Relation
 from contextstore.models.scope import Scope
@@ -128,6 +129,19 @@ class GraphStore(ABC):
         for the operator admin view's per-project live stats. Returns (0, 0)
         for a tenant whose graph has never been written to.
         """
+
+    @abstractmethod
+    async def fetch_entity_claims_page(
+        self, tenant_id: str, offset: int, limit: int
+    ) -> tuple[list[Fact], int]:
+        """One page of flattened entity claims for a tenant, plus the tenant's
+        total :Entity node count (for the pager).
+
+        Pagination is at the *node* level (`ORDER BY id SKIP/LIMIT`), so only one
+        page of nodes is ever materialized -- the whole graph is never loaded.
+        Each node's `claims_json` is expanded to one Fact per claim. Returns
+        ([], 0) for a tenant whose graph was never created. Powers the operator
+        facts table (api/admin_routes.py)."""
 
     @abstractmethod
     async def drop_graph(self, tenant_id: str) -> None:

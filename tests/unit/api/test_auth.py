@@ -40,7 +40,9 @@ async def test_require_api_key_valid(monkeypatch):
 
     monkeypatch.setattr(auth.postgres, "resolve_api_key", fake_resolve)
 
-    ctx = await auth.require_api_key(authorization="Bearer goodkey", db=object())
+    # x_project=None mirrors what FastAPI resolves an absent X-Project header to
+    # (a direct call wouldn't otherwise apply the Header default).
+    ctx = await auth.require_api_key(authorization="Bearer goodkey", x_project=None, db=object())
     assert ctx.tenant_id == "acme"
     assert ctx.api_key_id == key_id
 
