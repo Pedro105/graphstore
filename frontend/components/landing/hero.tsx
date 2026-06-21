@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { DOCS_URL } from "@/lib/links";
 
 const ACTIVITY_FEED = [
   {
@@ -63,7 +64,13 @@ export function Hero() {
               <Button
                 size="lg"
                 variant="outline"
-                render={<Link href="/docs" />}
+                render={
+                  <a
+                    href={DOCS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
               >
                 Read the docs
               </Button>

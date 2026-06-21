@@ -1,12 +1,13 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { DOCS_URL } from "@/lib/links";
 
 const NAV_LINKS = [
-  { label: "Features", href: "/features" },
-  { label: "Pricing", href: "/pricing" },
-  { label: "Docs", href: "/docs" },
-  { label: "API", href: "/api-reference" },
+  { label: "Features", href: "/features", external: false },
+  { label: "Pricing", href: "/pricing", external: false },
+  { label: "Docs", href: DOCS_URL, external: true },
+  { label: "API", href: "/api-reference", external: false },
 ];
 
 export function SiteHeader() {
@@ -25,7 +26,13 @@ export function SiteHeader() {
               key={link.href}
               variant="ghost"
               size="sm"
-              render={<Link href={link.href} />}
+              render={
+                link.external ? (
+                  <a href={link.href} target="_blank" rel="noopener noreferrer" />
+                ) : (
+                  <Link href={link.href} />
+                )
+              }
               className="text-muted-foreground hover:text-foreground"
             >
               {link.label}
@@ -36,7 +43,9 @@ export function SiteHeader() {
           <Button
             variant="outline"
             size="sm"
-            render={<Link href="/docs" />}
+            render={
+              <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" />
+            }
             className="hidden sm:inline-flex"
           >
             Documentation

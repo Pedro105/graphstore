@@ -15,7 +15,7 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["index", "authentication", "projects", "mcp"]
+            "pages": ["index", "authentication", "projects", "mcp-server"]
           }
         ]
       },

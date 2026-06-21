@@ -1,10 +1,10 @@
-import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { SiteFooter } from "@/components/landing/site-footer";
 import { SiteHeader } from "@/components/landing/site-header";
+import { DOCS_URL } from "@/lib/links";
 
 const BASE_URL = "https://api.contextstore.ai";
 
@@ -179,7 +179,13 @@ export default function ApiReferencePage() {
                   size="sm"
                   variant="outline"
                   className="mt-5"
-                  render={<Link href="/docs" />}
+                  render={
+                    <a
+                      href={DOCS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  }
                 >
                   Back to docs
                   <ArrowRight className="size-3.5" />

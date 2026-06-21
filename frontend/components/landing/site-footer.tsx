@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { DOCS_MCP_URL, DOCS_URL } from "@/lib/links";
+
 const FOOTER_SECTIONS = [
   {
     title: "Product",
@@ -13,10 +15,9 @@ const FOOTER_SECTIONS = [
   {
     title: "Developers",
     links: [
-      { label: "Documentation", href: "/docs" },
+      { label: "Documentation", href: DOCS_URL, external: true },
       { label: "API Reference", href: "/api-reference" },
-      { label: "MCP Integration", href: "/docs#mcp" },
-      { label: "SDKs", href: "/docs#sdks" },
+      { label: "MCP Integration", href: DOCS_MCP_URL, external: true },
     ],
   },
   {
@@ -62,12 +63,23 @@ export function SiteFooter() {
               <ul className="space-y-2">
                 {section.links.map((link) => (
                   <li key={link.label}>
-                    <Link
-                      href={link.href}
-                      className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {link.label}
-                    </Link>
+                    {"external" in link && link.external ? (
+                      <a
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        {link.label}
+                      </a>
+                    ) : (
+                      <Link
+                        href={link.href}
+                        className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        {link.label}
+                      </Link>
+                    )}
                   </li>
                 ))}
               </ul>

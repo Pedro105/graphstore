@@ -1,0 +1,56 @@
+---
+title: "MCP server"
+description: "Add remember and recall as native tools in Claude Code, Claude Desktop, and Cursor."
+---
+
+ContextStore ships a standalone MCP server, **`contextstore-mcp`**, that exposes
+`remember` and `recall` as native tools. It's a thin client over the HTTP API:
+set your API key and base URL, and the tenant is derived from the key — the MCP
+server never sends a tenant itself.
+
+It's a minimal, self-contained package, so the simplest way to run it is
+[`uvx`](https://docs.astral.sh/uv/) — no install or virtualenv needed:
+
+```bash
+CONTEXTSTORE_API_KEY=csk_live_your_key_here uvx contextstore-mcp
+```
+
+<Note>
+  The server reads `CONTEXTSTORE_API_KEY` (your `csk_live_…`) and
+  `CONTEXTSTORE_API_URL` (your deployment's base URL, default
+  `http://localhost:8000`). Mint a key from the dashboard's **API keys** page.
+</Note>
+
+## Claude Code
+
+One command registers it (`uvx` fetches and runs the server on demand):
+
+```bash
+claude mcp add contextstore \
+  --env CONTEXTSTORE_API_KEY=csk_live_your_key_here \
+  --env CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev \
+  -- uvx contextstore-mcp
+```
+
+## Claude Desktop / Cursor
+
+Add the server to `claude_desktop_config.json` (or a project-local `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "contextstore": {
+      "command": "uvx",
+      "args": ["contextstore-mcp"],
+      "env": {
+        "CONTEXTSTORE_API_KEY": "csk_live_your_key_here",
+        "CONTEXTSTORE_API_URL": "https://contextstore-api.fly.dev"
+      }
+    }
+  }
+}
+```
+
+Once registered, your Claude agents can call `contextstore_remember` and
+`contextstore_recall` directly — every write and query flows through the same
+graph as the HTTP API.
