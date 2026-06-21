@@ -185,6 +185,68 @@ def test_delete_project_not_owned_is_404(client, monkeypatch):
     assert resp.status_code == 404
 
 
+def _one_project_row():
+    return {
+        "id": uuid4(),
+        "tenant_id": "proj_existing",
+        "name": "Default",
+        "description": None,
+        "created_at": datetime.now(UTC),
+    }
+
+
+def test_list_projects_defaults_to_first_page_of_50(client, monkeypatch):
+    listed = AsyncMock(return_value=[_one_project_row()])
+    monkeypatch.setattr(postgres, "list_projects_for_user", listed)
+
+    resp = client.get("/v1/projects", headers={"Authorization": "Bearer goodkey"})
+    assert resp.status_code == 200
+    # Omitting params is backwards-compatible: still returns a plain list, now
+    # bounded to the default page size at offset 0.
+    assert listed.await_args.kwargs == {"limit": 50, "offset": 0}
+
+
+def test_list_projects_honours_explicit_limit_offset(client, monkeypatch):
+    listed = AsyncMock(return_value=[_one_project_row()])
+    monkeypatch.setattr(postgres, "list_projects_for_user", listed)
+
+    resp = client.get(
+        "/v1/projects?limit=10&offset=20", headers={"Authorization": "Bearer goodkey"}
+    )
+    assert resp.status_code == 200
+    assert listed.await_args.kwargs == {"limit": 10, "offset": 20}
+
+
+def test_list_projects_out_of_range_page_is_empty_not_error(client, monkeypatch):
+    # Offset past the end: the DB returns no rows; the endpoint returns [] / 200.
+    monkeypatch.setattr(postgres, "list_projects_for_user", AsyncMock(return_value=[]))
+    resp = client.get(
+        "/v1/projects?offset=10000", headers={"Authorization": "Bearer goodkey"}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_projects_rejects_out_of_bounds_params(client, monkeypatch):
+    monkeypatch.setattr(postgres, "list_projects_for_user", AsyncMock(return_value=[]))
+    h = {"Authorization": "Bearer goodkey"}
+    assert client.get("/v1/projects?limit=0", headers=h).status_code == 422
+    assert client.get("/v1/projects?limit=201", headers=h).status_code == 422
+    assert client.get("/v1/projects?offset=-1", headers=h).status_code == 422
+
+
+def test_list_agents_defaults_and_explicit_pagination(client, monkeypatch):
+    listed = AsyncMock(return_value=[])
+    monkeypatch.setattr(postgres, "list_agents", listed)
+    h = {"Authorization": "Bearer goodkey"}
+
+    client.get("/v1/agents", headers=h)
+    assert listed.await_args.kwargs == {"limit": 50, "offset": 0}
+
+    client.get("/v1/agents?limit=5&offset=15", headers=h)
+    assert listed.await_args.kwargs == {"limit": 5, "offset": 15}
+
+
 def test_delete_refuses_the_keys_own_project(client, graph_store, monkeypatch):
     # proj_existing is the tenant the authenticated key is bound to: deleting it
     # would revoke the key mid-request, so it's refused with 409 even when owned.

@@ -201,11 +201,15 @@ async def create_agent(
     return dict(row)
 
 
-async def list_agents(pool: Pool, tenant_id: str) -> list[dict[str, Any]]:
+async def list_agents(
+    pool: Pool, tenant_id: str, limit: int = 50, offset: int = 0
+) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         "SELECT id, name, description, created_at FROM agents "
-        "WHERE tenant_id = $1 ORDER BY created_at",
+        "WHERE tenant_id = $1 ORDER BY created_at LIMIT $2 OFFSET $3",
         tenant_id,
+        limit,
+        offset,
     )
     return [dict(row) for row in rows]
 
@@ -270,12 +274,16 @@ async def create_project_with_key(
     return dict(project), raw_key, key["id"]
 
 
-async def list_projects_for_user(pool: Pool, owner_user_id: UUID) -> list[dict[str, Any]]:
-    """The authenticated user's own projects, newest first."""
+async def list_projects_for_user(
+    pool: Pool, owner_user_id: UUID, limit: int = 50, offset: int = 0
+) -> list[dict[str, Any]]:
+    """The authenticated user's own projects, newest first (one page)."""
     rows = await pool.fetch(
         "SELECT id, tenant_id, name, description, created_at FROM projects "
-        "WHERE owner_user_id = $1 ORDER BY created_at DESC",
+        "WHERE owner_user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         owner_user_id,
+        limit,
+        offset,
     )
     return [dict(row) for row in rows]
 
@@ -384,27 +392,34 @@ async def delete_memory_write(pool: Pool, tenant_id: str, memory_write_id: UUID)
 # --- Operator admin: cross-tenant reads + destructive wipes ------------------
 
 
-async def list_users_with_project_counts(pool: Pool) -> list[dict[str, Any]]:
-    """Every user with how many projects they own (admin overview)."""
+async def list_users_with_project_counts(
+    pool: Pool, limit: int = 50, offset: int = 0
+) -> list[dict[str, Any]]:
+    """Every user with how many projects they own (admin overview), one page."""
     rows = await pool.fetch(
         "SELECT u.id, u.email, u.created_at, COUNT(p.id) AS project_count "
         "FROM users u LEFT JOIN projects p ON p.owner_user_id = u.id "
-        "GROUP BY u.id, u.email, u.created_at ORDER BY u.created_at"
+        "GROUP BY u.id, u.email, u.created_at ORDER BY u.created_at LIMIT $1 OFFSET $2",
+        limit,
+        offset,
     )
     return [dict(row) for row in rows]
 
 
-async def list_all_projects(pool: Pool) -> list[dict[str, Any]]:
+async def list_all_projects(pool: Pool, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
     """Every project across all users, with owner email and last-activity
-    timestamp from usage_log. Live graph node/edge counts are NOT joined here
-    (they live in FalkorDB, per tenant) -- the admin route layers those on."""
+    timestamp from usage_log, one page. Live graph node/edge counts are NOT
+    joined here (they live in FalkorDB, per tenant) -- the admin route layers
+    those on."""
     rows = await pool.fetch(
         "SELECT p.id, p.tenant_id, p.name, p.description, p.created_at, "
         "p.owner_user_id, u.email AS owner_email, "
         "(SELECT MAX(created_at) FROM usage_log WHERE tenant_id = p.tenant_id) "
         "AS last_activity_at "
         "FROM projects p JOIN users u ON u.id = p.owner_user_id "
-        "ORDER BY p.created_at DESC"
+        "ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
+        limit,
+        offset,
     )
     return [dict(row) for row in rows]
 

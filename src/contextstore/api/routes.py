@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from contextstore.api.auth import AuthContext, DbDep, require_admin, require_api_key
 from contextstore.api.dependencies import EmbeddingProviderDep, GraphStoreDep
+from contextstore.api.pagination import PaginationDep
 from contextstore.api.ratelimit import require_memories_quota, require_recall_quota
 from contextstore.core.service import recall as recall_service
 from contextstore.core.service import remember as remember_service
@@ -322,8 +323,9 @@ async def create_agent(
 async def list_agents(
     db: DbDep,
     auth: Annotated[AuthContext, Depends(require_api_key)],
+    page: PaginationDep,
 ) -> list[AgentResponse]:
-    rows = await postgres.list_agents(db, auth.tenant_id)
+    rows = await postgres.list_agents(db, auth.tenant_id, limit=page.limit, offset=page.offset)
     return [AgentResponse(**row) for row in rows]
 
 
@@ -390,9 +392,12 @@ async def create_project(
 async def list_projects(
     db: DbDep,
     auth: Annotated[AuthContext, Depends(require_api_key)],
+    page: PaginationDep,
 ) -> list[ProjectResponse]:
     """List the authenticated user's own projects (across all their keys)."""
-    rows = await postgres.list_projects_for_user(db, auth.user_id)
+    rows = await postgres.list_projects_for_user(
+        db, auth.user_id, limit=page.limit, offset=page.offset
+    )
     return [ProjectResponse(**row) for row in rows]
 
 

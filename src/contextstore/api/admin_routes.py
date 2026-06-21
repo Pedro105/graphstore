@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from contextstore.api.auth import DbDep, require_admin
 from contextstore.api.dependencies import GraphStoreDep
+from contextstore.api.pagination import PaginationDep
 from contextstore.api.routes import GraphSnapshot
 from contextstore.db import postgres
 from contextstore.models.claim import Claim
@@ -65,9 +66,9 @@ class AdminUser(BaseModel):
 
 
 @router.get("/users", response_model=list[AdminUser])
-async def list_users(db: DbDep) -> list[AdminUser]:
-    """All users with a count of the projects they own."""
-    rows = await postgres.list_users_with_project_counts(db)
+async def list_users(db: DbDep, page: PaginationDep) -> list[AdminUser]:
+    """All users with a count of the projects they own (one page)."""
+    rows = await postgres.list_users_with_project_counts(db, limit=page.limit, offset=page.offset)
     return [AdminUser(**row) for row in rows]
 
 
@@ -91,10 +92,12 @@ async def _project_with_stats(row: dict[str, Any], graph_store: GraphStoreDep) -
 
 
 @router.get("/projects", response_model=list[AdminProject])
-async def list_projects(db: DbDep, graph_store: GraphStoreDep) -> list[AdminProject]:
-    """Every project across all users, each enriched with live FalkorDB
-    node/edge counts and a last-activity timestamp from usage_log."""
-    rows = await postgres.list_all_projects(db)
+async def list_projects(
+    db: DbDep, graph_store: GraphStoreDep, page: PaginationDep
+) -> list[AdminProject]:
+    """Every project across all users (one page), each enriched with live
+    FalkorDB node/edge counts and a last-activity timestamp from usage_log."""
+    rows = await postgres.list_all_projects(db, limit=page.limit, offset=page.offset)
     return list(await asyncio.gather(*(_project_with_stats(row, graph_store) for row in rows)))
 
 

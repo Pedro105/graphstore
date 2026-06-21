@@ -105,6 +105,36 @@ def test_list_users_returns_project_counts(client, pool):
     assert resp.json()[0]["project_count"] == 3
 
 
+def test_list_users_default_pagination_params(client, pool):
+    pool.fetch.return_value = []
+    resp = client.get("/v1/admin/users", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    assert resp.json() == []  # out-of-range / empty page is [] / 200, not an error
+    # The query is parameterised with the default limit/offset (last two args).
+    assert pool.fetch.await_args.args[-2:] == (50, 0)
+
+
+def test_list_users_explicit_pagination_params(client, pool):
+    pool.fetch.return_value = []
+    resp = client.get("/v1/admin/users?limit=25&offset=75", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    assert pool.fetch.await_args.args[-2:] == (25, 75)
+
+
+def test_list_users_rejects_out_of_bounds_pagination(client, pool):
+    pool.fetch.return_value = []
+    assert client.get("/v1/admin/users?limit=0", headers=ADMIN_HEADERS).status_code == 422
+    assert client.get("/v1/admin/users?limit=201", headers=ADMIN_HEADERS).status_code == 422
+    assert client.get("/v1/admin/users?offset=-1", headers=ADMIN_HEADERS).status_code == 422
+
+
+def test_list_admin_projects_forwards_pagination(client, pool, graph_store):
+    pool.fetch.return_value = []
+    resp = client.get("/v1/admin/projects?limit=10&offset=30", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    assert pool.fetch.await_args.args[-2:] == (10, 30)
+
+
 def test_list_projects_enriches_with_live_graph_stats(client, pool, graph_store):
     pool.fetch.return_value = [
         {
