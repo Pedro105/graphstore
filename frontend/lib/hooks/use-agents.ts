@@ -1,34 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 
 import { createAgent, deleteAgent, listAgents } from "@/lib/api";
-import type { Agent, CreateAgentInput } from "@/lib/api";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
-}
+import type { CreateAgentInput } from "@/lib/api";
+import { useCachedResource } from "@/lib/hooks/use-cached-resource";
 
 export function useAgents() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setAgents(await listAgents());
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  const { data, loading, error, reload } = useCachedResource("agents", listAgents);
 
   const create = useCallback(
     async (input: CreateAgentInput) => {
@@ -46,5 +25,5 @@ export function useAgents() {
     [reload],
   );
 
-  return { agents, loading, error, create, remove, reload };
+  return { agents: data ?? [], loading, error, create, remove, reload };
 }

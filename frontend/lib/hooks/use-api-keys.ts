@@ -1,34 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 
 import { deleteApiKey, listApiKeys } from "@/lib/api";
-import type { ApiKey } from "@/lib/api";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
-}
+import { useCachedResource } from "@/lib/hooks/use-cached-resource";
 
 export function useApiKeys() {
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setApiKeys(await listApiKeys());
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  const { data, loading, error, reload } = useCachedResource("api-keys", listApiKeys);
 
   const remove = useCallback(
     async (id: string) => {
@@ -38,5 +16,5 @@ export function useApiKeys() {
     [reload],
   );
 
-  return { apiKeys, loading, error, remove, reload };
+  return { apiKeys: data ?? [], loading, error, remove, reload };
 }

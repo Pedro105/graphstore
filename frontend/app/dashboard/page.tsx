@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 
 import {
@@ -11,8 +10,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { fetchGraph } from "@/lib/api";
+import type { GraphSnapshot } from "@/lib/api";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { useApiKeys } from "@/lib/hooks/use-api-keys";
+import { useCachedResource } from "@/lib/hooks/use-cached-resource";
 import { useFocusAreas } from "@/lib/hooks/use-focus-areas";
 import { useFrameworks } from "@/lib/hooks/use-frameworks";
 import { useWorkspace } from "@/lib/dashboard/workspace";
@@ -23,21 +24,12 @@ export default function DashboardPage() {
   const { frameworks } = useFrameworks();
   const { focusAreas } = useFocusAreas();
   const { apiKeys } = useApiKeys();
-  const [graphCounts, setGraphCounts] = useState<{
-    entities: number;
-    relations: number;
-  } | null>(null);
-
-  useEffect(() => {
-    fetchGraph()
-      .then((snapshot) =>
-        setGraphCounts({
-          entities: snapshot.entities.length,
-          relations: snapshot.relations.length,
-        }),
-      )
-      .catch(() => setGraphCounts(null));
-  }, []);
+  // Shares the "graph" cache with the Memories page, so switching between them
+  // is instant.
+  const { data: graph } = useCachedResource<GraphSnapshot>("graph", fetchGraph);
+  const graphCounts = graph
+    ? { entities: graph.entities.length, relations: graph.relations.length }
+    : null;
 
   const connectedFrameworks = frameworks.filter(
     (framework) => framework.connected,

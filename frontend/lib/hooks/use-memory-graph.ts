@@ -1,19 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { fetchGraph, recall, remember } from "@/lib/api";
-import type { Entity, Relation, RecallResult } from "@/lib/api";
+import type { GraphSnapshot, RecallResult } from "@/lib/api";
+import { useCachedResource } from "@/lib/hooks/use-cached-resource";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
 export function useMemoryGraph() {
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [relations, setRelations] = useState<Relation[]>([]);
-  const [loadingGraph, setLoadingGraph] = useState(true);
-  const [graphError, setGraphError] = useState<string | null>(null);
+  // The graph snapshot is cached under "graph" -- shared with the dashboard
+  // Overview, and instant on tab revisits (revalidated in the background).
+  const {
+    data: snapshot,
+    loading: loadingGraph,
+    error: graphError,
+    reload: reloadGraph,
+  } = useCachedResource<GraphSnapshot>("graph", fetchGraph);
 
   const [ingesting, setIngesting] = useState(false);
   const [ingestError, setIngestError] = useState<string | null>(null);
@@ -22,38 +27,20 @@ export function useMemoryGraph() {
   const [recallError, setRecallError] = useState<string | null>(null);
   const [recallResult, setRecallResult] = useState<RecallResult | null>(null);
 
-  const loadGraph = useCallback(async () => {
-    setLoadingGraph(true);
-    setGraphError(null);
-    try {
-      const snapshot = await fetchGraph();
-      setEntities(snapshot.entities);
-      setRelations(snapshot.relations);
-    } catch (error) {
-      setGraphError(errorMessage(error));
-    } finally {
-      setLoadingGraph(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadGraph();
-  }, [loadGraph]);
-
   const ingest = useCallback(
     async (content: string, source: string) => {
       setIngesting(true);
       setIngestError(null);
       try {
         await remember({ content, source });
-        await loadGraph();
+        await reloadGraph();
       } catch (error) {
         setIngestError(errorMessage(error));
       } finally {
         setIngesting(false);
       }
     },
-    [loadGraph],
+    [reloadGraph],
   );
 
   const runRecall = useCallback(async (query: string) => {
@@ -76,8 +63,8 @@ export function useMemoryGraph() {
   }, []);
 
   return {
-    entities,
-    relations,
+    entities: snapshot?.entities ?? [],
+    relations: snapshot?.relations ?? [],
     loadingGraph,
     graphError,
     ingesting,
@@ -88,6 +75,6 @@ export function useMemoryGraph() {
     recallResult,
     runRecall,
     clearRecall,
-    reloadGraph: loadGraph,
+    reloadGraph,
   };
 }
