@@ -309,6 +309,25 @@ async def get_project_for_user(
     return dict(row) if row else None
 
 
+async def rename_project_for_user(
+    pool: Pool, tenant_id: str, owner_user_id: UUID, name: str
+) -> dict[str, Any] | None:
+    """Rename a project the user owns, returning the updated row (or None if the
+    user doesn't own it / it doesn't exist).
+
+    Ownership is the WHERE clause, same boundary as get_project_for_user: the
+    UPDATE only touches a row when owner_user_id matches, so a non-owner gets
+    None (treated as 404 by the caller), never a silent no-op success."""
+    row = await pool.fetchrow(
+        "UPDATE projects SET name = $3 WHERE tenant_id = $1 AND owner_user_id = $2 "
+        "RETURNING id, tenant_id, name, description, created_at",
+        tenant_id,
+        owner_user_id,
+        name,
+    )
+    return dict(row) if row else None
+
+
 # --- Memory write audit log (raw content the graph engine discards) ----------
 
 

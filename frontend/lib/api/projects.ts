@@ -3,7 +3,7 @@
 // Listing/creating is user-scoped; switching which project the rest of the
 // dashboard acts on is handled by the workspace switcher (lib/dashboard).
 
-import { getJson, postJson } from "@/lib/api/live-client";
+import { delJson, getJson, patchJson, postJson } from "@/lib/api/live-client";
 
 export interface Project {
   id: string;
@@ -29,4 +29,24 @@ export async function createProject(
   input: CreateProjectInput,
 ): Promise<Project> {
   return postJson<Project>("/api/projects", input);
+}
+
+export async function renameProject(
+  tenantId: string,
+  name: string,
+): Promise<Project> {
+  return patchJson<Project>(`/api/projects/${encodeURIComponent(tenantId)}`, {
+    name,
+  });
+}
+
+// Destructive: wipes the project's graph and all its rows. The backend requires
+// `confirm` to equal the tenant_id, so the caller must pass it through verbatim.
+export async function deleteProject(
+  tenantId: string,
+  confirm: string,
+): Promise<void> {
+  return delJson(
+    `/api/projects/${encodeURIComponent(tenantId)}?confirm=${encodeURIComponent(confirm)}`,
+  );
 }

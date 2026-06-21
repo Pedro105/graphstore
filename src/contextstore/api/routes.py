@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from contextstore.api.auth import AuthContext, DbDep, require_admin, require_api_key
@@ -394,3 +394,72 @@ async def list_projects(
     """List the authenticated user's own projects (across all their keys)."""
     rows = await postgres.list_projects_for_user(db, auth.user_id)
     return [ProjectResponse(**row) for row in rows]
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+@router.patch("/projects/{tenant_id}", response_model=ProjectResponse)
+async def rename_project(
+    tenant_id: str,
+    body: ProjectUpdateRequest,
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> ProjectResponse:
+    """Rename a project the authenticated user owns. Ownership is enforced in the
+    UPDATE's WHERE clause (the user_id comes from the key, never the path/body),
+    so a project the user doesn't own is a 404 -- same as if it didn't exist."""
+    row = await postgres.rename_project_for_user(db, tenant_id, auth.user_id, body.name)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found or not owned by the authenticated user.",
+        )
+    return ProjectResponse(**row)
+
+
+@router.delete("/projects/{tenant_id}", status_code=status.HTTP_200_OK)
+async def delete_project(
+    tenant_id: str,
+    db: DbDep,
+    graph_store: GraphStoreDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+    confirm: str = Query(
+        default="",
+        description="Must equal the tenant_id being deleted, as a deliberate confirmation.",
+    ),
+) -> dict[str, str]:
+    """DESTRUCTIVE: delete a project the authenticated user owns -- its FalkorDB
+    graph and all its Postgres rows (project, api_keys, agents, usage_log,
+    memory_writes). Mirrors the admin wipe, but scoped to the caller's own
+    projects.
+
+    Guards, in order: ownership (404 if the user doesn't own it), a typed
+    `?confirm=<tenant_id>` match (400 otherwise), and a refusal to delete the
+    very project the calling key is bound to (409) -- that would revoke the key
+    mid-request and lock the user out of their own dashboard. The graph is
+    dropped only after the Postgres rows are gone, so a partial failure never
+    leaves a live key pointing at an emptied graph."""
+    owned = await postgres.get_project_for_user(db, tenant_id, auth.user_id)
+    if owned is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found or not owned by the authenticated user.",
+        )
+    if confirm != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirmation required: pass ?confirm=<tenant_id> matching the path.",
+        )
+    if tenant_id == auth.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot delete the project your current API key is bound to. "
+                "Switch to (or create) another project first."
+            ),
+        )
+    await postgres.delete_project_cascade(db, tenant_id)
+    await graph_store.drop_graph(tenant_id)
+    return {"tenant_id": tenant_id, "status": "deleted"}

@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from "react";
 
-import { createProject, listProjects, type Project } from "@/lib/api";
+import {
+  createProject,
+  deleteProject as apiDeleteProject,
+  listProjects,
+  renameProject as apiRenameProject,
+  type Project,
+} from "@/lib/api";
 
 // Must match ACTIVE_PROJECT_COOKIE in lib/api/fastapi.ts (read server-side by
 // the proxy). A tenant_id, not a secret -- the backend re-checks ownership on
@@ -33,6 +39,8 @@ interface Workspace {
   loading: boolean;
   switchTo: (tenantId: string) => void;
   createAndSwitch: (name: string) => Promise<void>;
+  renameProject: (tenantId: string, name: string) => Promise<void>;
+  deleteProject: (tenantId: string, confirm: string) => Promise<void>;
 }
 
 const WorkspaceContext = createContext<Workspace | null>(null);
@@ -88,12 +96,43 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     window.location.reload();
   }, []);
 
+  const renameProject = useCallback(async (tenantId: string, name: string) => {
+    const updated = await apiRenameProject(tenantId, name);
+    // Update in place -- no reload needed; the switcher and any open page read
+    // the new name from this state immediately.
+    setProjects((ps) =>
+      ps.map((p) => (p.tenant_id === tenantId ? updated : p)),
+    );
+  }, []);
+
+  const deleteProject = useCallback(
+    async (tenantId: string, confirm: string) => {
+      await apiDeleteProject(tenantId, confirm);
+      // If the active project was the one deleted, drop the cookie so the
+      // provider re-pins a surviving project on the next load.
+      if (readCookie(ACTIVE_PROJECT_COOKIE) === tenantId) {
+        document.cookie = `${ACTIVE_PROJECT_COOKIE}=; path=/; SameSite=Lax; max-age=0`;
+      }
+      // Full navigation so every page + data hook refetches without the project.
+      window.location.assign("/dashboard");
+    },
+    [],
+  );
+
   const activeProject =
     projects.find((p) => p.tenant_id === activeTenant) ?? null;
 
   return (
     <WorkspaceContext.Provider
-      value={{ projects, activeProject, loading, switchTo, createAndSwitch }}
+      value={{
+        projects,
+        activeProject,
+        loading,
+        switchTo,
+        createAndSwitch,
+        renameProject,
+        deleteProject,
+      }}
     >
       {children}
     </WorkspaceContext.Provider>

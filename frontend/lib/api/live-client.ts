@@ -78,6 +78,16 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await safeFetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await throwForStatus(res, path);
+  return res.json() as Promise<T>;
+}
+
 export async function delJson(path: string): Promise<void> {
   const res = await safeFetch(path, { method: "DELETE" });
   if (!res.ok) await throwForStatus(res, path);
