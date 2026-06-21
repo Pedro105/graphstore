@@ -11,7 +11,7 @@ const FRAMEWORKS = [
 
 export function LogosStrip() {
   return (
-    <section className="bg-section-alt py-7">
+    <section className="bg-transparent py-7">
       <div className="mx-auto max-w-5xl px-6">
         <p className="mb-5 text-center text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/55">
           Works with any agent framework or orchestrator

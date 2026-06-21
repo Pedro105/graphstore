@@ -2,6 +2,11 @@
 
 import dynamic from "next/dynamic";
 
+import {
+  GlowSection,
+  landingPillClassName,
+} from "@/components/landing/section-glow";
+
 const DemoGraph = dynamic(
   () =>
     import("@/components/landing/demo-graph").then((mod) => mod.DemoGraph),
@@ -33,8 +38,11 @@ const ENTITY_LEGEND = [
 
 export function GraphSection() {
   return (
-    <section className="bg-section-alt">
-      <div className="mx-auto max-w-6xl px-6 py-20">
+    <GlowSection
+      className="bg-transparent"
+      glows={[{ placement: "center-right", variant: "on-light", size: "lg" }]}
+    >
+      <div className="relative mx-auto max-w-6xl px-6 py-20">
         {/* Header */}
         <div className="mb-8 grid items-end gap-6 md:grid-cols-2">
           <div>
@@ -59,7 +67,7 @@ export function GraphSection() {
           {AGENT_TAGS.map((tag) => (
             <span
               key={tag.name}
-              className="flex items-center gap-1.5 rounded border border-border bg-card px-2.5 py-1 text-sm text-foreground/70"
+              className={`${landingPillClassName} text-sm text-foreground/75`}
             >
               <span
                 className="size-1.5 shrink-0 rounded-full"
@@ -68,7 +76,9 @@ export function GraphSection() {
               {tag.name}
             </span>
           ))}
-          <span className="ml-auto rounded border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground">
+          <span
+            className={`${landingPillClassName} ml-auto text-xs text-muted-foreground`}
+          >
             8 entities &middot; 8 relations
           </span>
         </div>
@@ -92,6 +102,6 @@ export function GraphSection() {
           ))}
         </div>
       </div>
-    </section>
+    </GlowSection>
   );
 }

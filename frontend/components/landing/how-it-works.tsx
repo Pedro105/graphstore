@@ -1,4 +1,9 @@
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  GlowSection,
+  landingRowClassName,
+  landingSurfaceClassName,
+} from "@/components/landing/section-glow";
 
 const WRITE_CODE = `import contextstore
 
@@ -43,8 +48,15 @@ const EXTRACTED_RELATIONS = [
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className="bg-background">
-      <div className="mx-auto max-w-6xl px-6 py-24">
+    <GlowSection
+      id="how-it-works"
+      className="bg-background"
+      glows={[
+        { placement: "center-right", variant: "on-light", size: "md" },
+        { placement: "bottom-left", variant: "on-light", size: "sm" },
+      ]}
+    >
+      <div className="relative mx-auto max-w-6xl px-6 py-24">
         {/* Section header */}
         <div className="mb-20 max-w-2xl">
           <h2 className="text-4xl font-light leading-tight text-foreground lg:text-5xl">
@@ -97,7 +109,7 @@ export function HowItWorks() {
               </ul>
             </div>
           </div>
-          <Card className="overflow-hidden">
+          <Card className={`overflow-hidden ${landingSurfaceClassName}`}>
             <CardContent className="py-5">
               <p className="mb-3 font-mono text-xs text-muted-foreground">
                 Python SDK
@@ -111,7 +123,7 @@ export function HowItWorks() {
 
         {/* Step 02 — Extract */}
         <div className="mb-28 grid items-center gap-12 lg:grid-cols-2">
-          <Card className="order-last overflow-hidden lg:order-first">
+          <Card className={`order-last overflow-hidden lg:order-first ${landingSurfaceClassName}`}>
             <CardContent className="py-5">
               <p className="mb-4 font-mono text-xs text-muted-foreground">
                 Extracted from: &ldquo;Acme Corp expects 500 units of Product Y
@@ -121,13 +133,13 @@ export function HowItWorks() {
                 {EXTRACTED_ENTITIES.map((e) => (
                   <div
                     key={e.name}
-                    className="flex items-center gap-2.5 rounded border border-border bg-muted/40 px-3 py-2.5"
+                    className={`flex items-center gap-2.5 rounded-lg border border-border/50 bg-card px-3 py-2.5 ${landingRowClassName}`}
                   >
                     <span
                       className="size-2 shrink-0 rounded-full"
                       style={{ backgroundColor: e.color }}
                     />
-                    <span className="text-sm font-medium text-foreground">
+                    <span className="text-sm font-bold text-foreground">
                       {e.name}
                     </span>
                     <span className="ml-auto text-xs text-muted-foreground">
@@ -147,7 +159,7 @@ export function HowItWorks() {
                       className="flex items-center gap-1.5 font-mono text-[13px] text-foreground/70"
                     >
                       <span className="text-foreground">{r.from}</span>
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground shadow-[0_1px_2px_rgba(26,26,26,0.04)]">
                         {r.rel}
                       </span>
                       <span className="text-foreground">{r.to}</span>
@@ -228,13 +240,15 @@ export function HowItWorks() {
               </ul>
             </div>
           </div>
-          <Card>
+          <Card className={landingSurfaceClassName}>
             <CardContent className="py-5">
               <p className="mb-4 font-mono text-xs text-muted-foreground">
                 Resolution outcome
               </p>
               <div className="space-y-3">
-                <div className="rounded border border-border bg-muted/30 p-3.5">
+                <div
+                  className={`rounded-lg border border-border/50 bg-card p-3.5 ${landingRowClassName}`}
+                >
                   <div className="flex items-center gap-2">
                     <span className="size-2 rounded-full bg-[#6366f1]" />
                     <span className="text-sm font-semibold text-foreground">
@@ -249,7 +263,9 @@ export function HowItWorks() {
                     write at 09:14:02
                   </p>
                 </div>
-                <div className="rounded border border-border bg-muted/30 p-3.5">
+                <div
+                  className={`rounded-lg border border-border/50 bg-card p-3.5 ${landingRowClassName}`}
+                >
                   <div className="flex items-center gap-2">
                     <span className="size-2 rounded-full bg-[#f59e0b]" />
                     <span className="text-sm font-semibold text-foreground">
@@ -263,7 +279,9 @@ export function HowItWorks() {
                     no match above threshold &middot; created as new Person node
                   </p>
                 </div>
-                <div className="rounded border border-border bg-muted/30 p-3.5">
+                <div
+                  className={`rounded-lg border border-border/50 bg-card p-3.5 ${landingRowClassName}`}
+                >
                   <p className="font-mono text-xs text-muted-foreground">
                     Relation written
                   </p>
@@ -285,7 +303,7 @@ export function HowItWorks() {
 
         {/* Step 04 — Recall */}
         <div className="grid items-center gap-12 lg:grid-cols-2">
-          <Card className="order-last overflow-hidden lg:order-first">
+          <Card className={`order-last overflow-hidden lg:order-first ${landingSurfaceClassName}`}>
             <CardContent className="py-5">
               <p className="mb-3 font-mono text-xs text-muted-foreground">
                 Any agent can query
@@ -331,6 +349,6 @@ export function HowItWorks() {
           </div>
         </div>
       </div>
-    </section>
+    </GlowSection>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { sectionGlowStyle } from "@/components/landing/section-glow";
 import { DOCS_URL } from "@/lib/links";
 
 const ACTIVITY_FEED = [
@@ -33,13 +34,14 @@ const ACTIVITY_FEED = [
 export function Hero() {
   return (
     <div
-      className="bg-background"
-      style={{
-        background:
-          "radial-gradient(ellipse 140% 90% at 55% -15%, #f9f8f6 0%, #efe9e3 55%, #f9f8f6 100%)",
-      }}
+      data-section-glow=""
+      className="landing-glow-host relative bg-transparent"
+      style={sectionGlowStyle([
+        { placement: "center-right", variant: "on-light", size: "lg" },
+        { placement: "center-left", variant: "on-light", size: "md" },
+      ])}
     >
-      <div className="mx-auto max-w-6xl px-6 py-28 lg:py-36">
+      <div className="relative z-[1] mx-auto max-w-6xl px-6 py-28 lg:py-36">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           {/* Left: headline and CTAs */}
           <div>
@@ -81,7 +83,7 @@ export function Hero() {
           </div>
 
           {/* Right: live activity feed */}
-          <div className="overflow-hidden rounded border border-border bg-card/90 shadow-sm backdrop-blur-sm">
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-card/95 shadow-[0_1px_2px_rgba(26,26,26,0.04),0_8px_28px_rgba(26,26,26,0.06)] backdrop-blur-sm">
             <div className="flex items-center justify-between border-b border-border bg-secondary px-4 py-3">
               <span className="font-mono text-sm font-medium text-foreground/70">
                 tenant_saas_platform

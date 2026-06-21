@@ -1,6 +1,10 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import {
+  GlowSection,
+  landingRowClassName,
+} from "@/components/landing/section-glow";
 
 const DEMO_AGENTS = [
   {
@@ -31,8 +35,11 @@ const DEMO_AGENTS = [
 
 export function AgentsSection() {
   return (
-    <section className="bg-section-alt">
-      <div className="mx-auto max-w-6xl px-6 py-20">
+    <GlowSection
+      className="bg-section-alt"
+      glows={[{ placement: "bottom-right", variant: "on-soft", size: "md" }]}
+    >
+      <div className="relative mx-auto max-w-6xl px-6 py-20">
         <div className="grid items-start gap-16 lg:grid-cols-2">
           {/* Left: text */}
           <div className="lg:sticky lg:top-24">
@@ -87,7 +94,7 @@ export function AgentsSection() {
             {DEMO_AGENTS.map((agent) => (
               <div
                 key={agent.name}
-                className="rounded border border-border bg-card p-5 transition-colors hover:border-foreground/20"
+                className={`rounded-lg border border-border/50 bg-card p-5 transition-colors hover:border-foreground/15 ${landingRowClassName}`}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-2.5">
@@ -116,6 +123,6 @@ export function AgentsSection() {
           </div>
         </div>
       </div>
-    </section>
+    </GlowSection>
   );
 }

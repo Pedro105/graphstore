@@ -14,9 +14,11 @@ export default function Home() {
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
       <main className="flex-1">
-        <Hero />
-        <LogosStrip />
-        <GraphSection />
+        <div className="landing-top-gradient">
+          <Hero />
+          <LogosStrip />
+          <GraphSection />
+        </div>
         <HowItWorks />
         <AgentsSection />
         <MultiAgentSection />

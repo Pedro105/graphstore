@@ -191,3 +191,45 @@
     letter-spacing: -0.025em;
   }
 }
+
+/* Landing section blob gradients — rendered on ::before so content/bg utilities can't hide them */
+[data-section-glow]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--section-glow-layers);
+  background-repeat: no-repeat;
+}
+
+.landing-glow-host {
+  position: relative;
+  isolation: isolate;
+}
+
+.landing-glow-host::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--section-glow-layers);
+  background-repeat: no-repeat;
+}
+
+/* Light → soft → light across hero, logos strip, and graph */
+.landing-top-gradient {
+  background: linear-gradient(
+    180deg,
+    var(--palette-light) 0%,
+    var(--palette-light) 34%,
+    color-mix(in srgb, var(--palette-light) 72%, var(--palette-soft) 28%) 40%,
+    color-mix(in srgb, var(--palette-light) 48%, var(--palette-soft) 52%) 45%,
+    color-mix(in srgb, var(--palette-light) 38%, var(--palette-soft) 62%) 50%,
+    color-mix(in srgb, var(--palette-light) 48%, var(--palette-soft) 52%) 55%,
+    color-mix(in srgb, var(--palette-light) 72%, var(--palette-soft) 28%) 61%,
+    var(--palette-light) 67%,
+    var(--palette-light) 100%
+  );
+}

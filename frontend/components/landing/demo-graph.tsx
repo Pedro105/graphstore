@@ -2,6 +2,8 @@
 
 import { Handle, Position, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 
+import { landingSurfaceClassName } from "@/components/landing/section-glow";
+
 const ENTITY_COLOR: Record<string, string> = {
   Organization: "#6366f1",
   Person: "#f59e0b",
@@ -186,7 +188,9 @@ const DEMO_EDGES = [
 
 export function DemoGraph() {
   return (
-    <div className="h-[460px] w-full overflow-hidden rounded border border-border bg-card">
+    <div
+      className={`h-[460px] w-full overflow-hidden rounded-xl border border-border/60 bg-card ${landingSurfaceClassName}`}
+    >
       <ReactFlowProvider>
         <ReactFlow
           nodes={DEMO_NODES}
