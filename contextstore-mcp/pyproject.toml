@@ -1,0 +1,50 @@
+[project]
+name = "contextstore-mcp"
+version = "0.1.0"
+description = "MCP server for ContextStore — exposes remember/recall as native tools in Claude Code, Claude Desktop, and Cursor."
+readme = "README.md"
+requires-python = ">=3.12"
+# A thin HTTP client over the ContextStore API. Deliberately minimal so it
+# installs standalone via `uvx contextstore-mcp` with no backend dependencies
+# (no FalkorDB / FastAPI / Anthropic / OpenAI / asyncpg).
+dependencies = [
+    "mcp>=1.28.0",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.scripts]
+contextstore-mcp = "contextstore_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/contextstore_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+# The mcp SDK ships no py.typed in some releases; treat as opaque under --strict
+# rather than failing the whole package on a third-party gap.
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

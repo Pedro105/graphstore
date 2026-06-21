@@ -17,15 +17,14 @@ dependencies = [
     "structlog>=24.1",
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
-    "mcp>=1.28.0",
+    # httpx is required by Starlette's TestClient (used throughout tests). The
+    # MCP server that also used it has moved to the standalone contextstore-mcp
+    # package (see contextstore-mcp/), so `mcp` is no longer a backend dep.
     "httpx>=0.27",
     "pyyaml>=6.0",
     "asyncpg>=0.29",
     "bcrypt>=4.1",
 ]
-
-[project.scripts]
-contextstore-mcp = "contextstore.mcp_server.server:main"
 
 [dependency-groups]
 dev = [
@@ -61,3 +60,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Only the backend's own tests. The standalone contextstore-mcp package has its
+# own suite (run from contextstore-mcp/) and its own isolated dependencies.
+testpaths = ["tests"]

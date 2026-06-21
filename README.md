@@ -70,22 +70,20 @@ Opens at `http://localhost:3000` (or the next available port).
 
 ### MCP server (Claude Code / Claude Desktop)
 
-Exposes `remember`/`recall` as MCP tools (`contextstore_remember`,
-`contextstore_recall`) over the running FastAPI server. Requires the
-backend to be running (see above) and `CONTEXTSTORE_API_KEY` set to a
-ContextStore API key (`csk_live_...`). The server sends it as
-`Authorization: Bearer <key>` on every call, and the backend derives the
-tenant from it — the MCP server no longer sets a tenant/scope itself. Mint
-a key via `POST /v1/keys` (see "API keys" below). Add it to `.env`, or
-pass as a `--env` flag below.
+The MCP server lives in its own standalone package, **`contextstore-mcp/`**
+(not this backend package), so it installs zero-config via `uvx` with none of
+the backend's dependencies. It exposes `remember`/`recall` as MCP tools
+(`contextstore_remember`, `contextstore_recall`), calling the ContextStore API
+over HTTP with `CONTEXTSTORE_API_KEY` (`csk_live_...`); the backend derives the
+tenant from the key. Mint a key via `POST /v1/keys` (see "API keys" below).
 
-Register with Claude Code (uses an absolute path so it works regardless
-of which directory `claude` is invoked from):
+Register with Claude Code:
 
 ```bash
 claude mcp add contextstore \
   --env CONTEXTSTORE_API_KEY=csk_live_... \
-  -- /Users/pedropinto/graphstore/.venv/bin/contextstore-mcp
+  --env CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev \
+  -- uvx contextstore-mcp
 ```
 
 Or, for a team-shared setup checked into the repo, create `.mcp.json` in
@@ -96,9 +94,11 @@ the project root:
   "mcpServers": {
     "contextstore": {
       "type": "stdio",
-      "command": "/Users/pedropinto/graphstore/.venv/bin/contextstore-mcp",
+      "command": "uvx",
+      "args": ["contextstore-mcp"],
       "env": {
-        "CONTEXTSTORE_API_KEY": "csk_live_..."
+        "CONTEXTSTORE_API_KEY": "csk_live_...",
+        "CONTEXTSTORE_API_URL": "https://contextstore-api.fly.dev"
       }
     }
   }
@@ -110,6 +110,8 @@ Verify it registered and connected:
 ```bash
 claude mcp list   # should show "Connected" for contextstore
 ```
+
+See `contextstore-mcp/README.md` for full configuration and local development.
 
 Then inside a Claude Code session, `/mcp` shows its tools, or just ask
 Claude to remember or recall something.

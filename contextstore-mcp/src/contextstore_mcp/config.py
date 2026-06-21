@@ -1,9 +1,8 @@
 """MCP server configuration, loaded from environment variables / .env.
 
-Separate from contextstore.core.config.Settings on purpose: this server is
-a thin HTTP client (see client.py) that never touches FalkorDB or calls an
-LLM provider directly, so it has no business requiring ANTHROPIC_API_KEY,
-FALKORDB_HOST, etc. just to start up.
+A thin HTTP client (see client.py) that never touches FalkorDB or an LLM
+provider directly, so it needs only where the API is and the key to reach it --
+no ANTHROPIC_API_KEY / FALKORDB_HOST / DATABASE_URL.
 """
 
 from functools import lru_cache
@@ -22,7 +21,7 @@ class MCPSettings(BaseSettings):
     api_url: str = "http://localhost:8000"
     # The ContextStore API key (csk_live_...). Sent as `Authorization: Bearer
     # <key>` on every backend call; the tenant is resolved from it server-side,
-    # so the MCP server no longer constructs or sends a tenant_id/scope itself.
+    # so this server never constructs or sends a tenant_id/scope itself.
     api_key: str
 
 

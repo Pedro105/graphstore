@@ -1,19 +1,16 @@
 """Thin async HTTP client wrapping the ContextStore API.
 
-Deliberately calls the running FastAPI server over HTTP rather than
-importing core.service directly -- this is the same shape the production
-MCP server will have once this is hosted and callers connect over HTTPS
-with an API key. There's no auth yet, so `api_key` stays unset and no
-Authorization header is sent; passing a real key later is the only change
-needed (see `_headers`), not a rewrite.
+Calls the hosted ContextStore API over HTTP with a Bearer API key; the backend
+resolves the tenant from the key, so this client never constructs or sends a
+tenant_id/scope itself. It imports nothing from the backend -- only the minimal
+response models in models.py.
 """
 
 from typing import Any
 
 import httpx
 
-from contextstore.models.memory import Memory
-from contextstore.models.recall import RecallResult
+from contextstore_mcp.models import RecallResult, RememberResult
 
 
 class ContextStoreClient:
@@ -41,7 +38,7 @@ class ContextStoreClient:
         extra_scope: dict[str, Any] | None = None,
         confidence: float = 1.0,
         evidence: list[str] | None = None,
-    ) -> Memory:
+    ) -> RememberResult:
         response = await self._client.post(
             "/v1/memories",
             json={
@@ -54,7 +51,7 @@ class ContextStoreClient:
             headers=self._headers(),
         )
         response.raise_for_status()
-        return Memory.model_validate(response.json())
+        return RememberResult.model_validate(response.json())
 
     async def recall(
         self,

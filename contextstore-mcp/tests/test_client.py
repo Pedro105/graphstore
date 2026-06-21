@@ -1,42 +1,45 @@
-"""Unit tests for ContextStoreClient -- request shape only, HTTP fully mocked."""
+"""Unit tests for ContextStoreClient -- request shape only, HTTP fully mocked.
+
+The mocked responses include extra fields the real API returns (scope,
+provenance history, stats, ...) to prove the minimal response models ignore
+them rather than failing to parse.
+"""
 
 import json
 
 import httpx
 import pytest
 
-from contextstore.mcp_server.client import ContextStoreClient
-from contextstore.models.entity import Entity
-from contextstore.models.memory import Memory
-from contextstore.models.provenance import Provenance
-from contextstore.models.recall import RecallResult, RetrievalStats
-from contextstore.models.scope import Scope
+from contextstore_mcp.client import ContextStoreClient
 
-SCOPE = Scope.from_dict({"tenant_id": "acme", "user_id": "u1"})
-PROVENANCE = Provenance(source="mcp")
-STATS = RetrievalStats(
-    total_ms=1.0,
-    retrieval_ms=1.0,
-    synthesis_ms=None,
-    seeds_found=1,
-    nodes_traversed=1,
-    relations_found=0,
-    depth_reached=1,
-    query_class="manual",
-    used_llm_classifier=False,
-)
+REMEMBER_RESPONSE = {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "content": "Pedro works at Acme.",
+    "entities": [
+        {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "Pedro",
+            "entity_type": "person",
+            # Extra fields the real API returns -- must be ignored:
+            "scope": {"tenant_id": "acme"},
+            "provenance": {"source": "mcp", "confidence": 1.0},
+            "claims": [],
+        }
+    ],
+    "relations": [],
+    "scope": {"tenant_id": "acme"},
+    "provenance": {"source": "mcp", "confidence": 1.0},
+}
 
-
-def make_memory() -> Memory:
-    entity = Entity(name="Pedro", entity_type="person", scope=SCOPE, provenance=PROVENANCE)
-    return Memory(
-        content="Pedro works at Acme.", entities=[entity], scope=SCOPE, provenance=PROVENANCE
-    )
-
-
-def make_recall_result() -> RecallResult:
-    entity = Entity(name="Pedro", entity_type="person", scope=SCOPE, provenance=PROVENANCE)
-    return RecallResult(query="who is Pedro", scope=SCOPE, entities=[entity], stats=STATS)
+RECALL_RESPONSE = {
+    "query": "who is Pedro",
+    "scope": {"tenant_id": "acme"},
+    "entities": [
+        {"id": "22222222-2222-2222-2222-222222222222", "name": "Pedro", "entity_type": "person"}
+    ],
+    "relations": [],
+    "stats": {"total_ms": 1.0},  # extra, ignored
+}
 
 
 def make_client(
@@ -58,8 +61,7 @@ def make_client(
 
 async def test_remember_posts_to_correct_path_with_correct_body():
     captured: list[httpx.Request] = []
-    memory = make_memory()
-    client = make_client(captured, memory.model_dump(mode="json"))
+    client = make_client(captured, REMEMBER_RESPONSE)
 
     result = await client.remember(
         content="Pedro works at Acme.",
@@ -81,19 +83,16 @@ async def test_remember_posts_to_correct_path_with_correct_body():
         "confidence": 1.0,
         "evidence": None,
     }
-    assert result == memory
+    # The rich response parsed down to the fields we read; extras ignored.
+    assert [e.name for e in result.entities] == ["Pedro"]
+    assert result.entities[0].entity_type == "person"
 
 
 async def test_remember_passes_confidence_and_evidence():
     captured: list[httpx.Request] = []
-    client = make_client(captured, make_memory().model_dump(mode="json"))
+    client = make_client(captured, REMEMBER_RESPONSE)
 
-    await client.remember(
-        content="x",
-        source="mcp",
-        confidence=0.7,
-        evidence=["doc_1"],
-    )
+    await client.remember(content="x", source="mcp", confidence=0.7, evidence=["doc_1"])
 
     body = json.loads(captured[0].content)
     assert body["confidence"] == 0.7
@@ -102,8 +101,7 @@ async def test_remember_passes_confidence_and_evidence():
 
 async def test_recall_posts_to_correct_path_with_correct_body():
     captured: list[httpx.Request] = []
-    recall_result = make_recall_result()
-    client = make_client(captured, recall_result.model_dump(mode="json"))
+    client = make_client(captured, RECALL_RESPONSE)
 
     result = await client.recall(query="who is Pedro")
 
@@ -119,18 +117,14 @@ async def test_recall_posts_to_correct_path_with_correct_body():
         "traversal_depth": 1,
         "synthesise": False,
     }
-    assert result == recall_result
+    assert [e.name for e in result.entities] == ["Pedro"]
 
 
 async def test_recall_passes_limit_and_traversal_depth():
     captured: list[httpx.Request] = []
-    client = make_client(captured, make_recall_result().model_dump(mode="json"))
+    client = make_client(captured, RECALL_RESPONSE)
 
-    await client.recall(
-        query="x",
-        limit=5,
-        traversal_depth=2,
-    )
+    await client.recall(query="x", limit=5, traversal_depth=2)
 
     body = json.loads(captured[0].content)
     assert body["limit"] == 5
@@ -139,12 +133,9 @@ async def test_recall_passes_limit_and_traversal_depth():
 
 async def test_recall_passes_synthesise_flag():
     captured: list[httpx.Request] = []
-    client = make_client(captured, make_recall_result().model_dump(mode="json"))
+    client = make_client(captured, RECALL_RESPONSE)
 
-    await client.recall(
-        query="x",
-        synthesise=True,
-    )
+    await client.recall(query="x", synthesise=True)
 
     body = json.loads(captured[0].content)
     assert body["synthesise"] is True
@@ -152,7 +143,7 @@ async def test_recall_passes_synthesise_flag():
 
 async def test_no_authorization_header_when_no_api_key():
     captured: list[httpx.Request] = []
-    client = make_client(captured, make_memory().model_dump(mode="json"))
+    client = make_client(captured, REMEMBER_RESPONSE)
 
     await client.remember(content="x", source="mcp")
 
@@ -161,7 +152,7 @@ async def test_no_authorization_header_when_no_api_key():
 
 async def test_authorization_header_present_when_api_key_set():
     captured: list[httpx.Request] = []
-    client = make_client(captured, make_memory().model_dump(mode="json"), api_key="secret123")
+    client = make_client(captured, REMEMBER_RESPONSE, api_key="secret123")
 
     await client.remember(content="x", source="mcp")
 

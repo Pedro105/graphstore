@@ -7,10 +7,9 @@ internal documentation.
 
 from mcp.server.fastmcp import FastMCP
 
-from contextstore.mcp_server.client import ContextStoreClient
-from contextstore.mcp_server.config import get_mcp_settings
-from contextstore.models.memory import Memory
-from contextstore.models.recall import RecallResult
+from contextstore_mcp.client import ContextStoreClient
+from contextstore_mcp.config import get_mcp_settings
+from contextstore_mcp.models import RecallResult, RememberResult
 
 settings = get_mcp_settings()
 # The API key is sent as a Bearer token on every call; the backend resolves the
@@ -20,7 +19,7 @@ client = ContextStoreClient(base_url=settings.api_url, api_key=settings.api_key)
 mcp = FastMCP("contextstore")
 
 
-def _format_remember_result(memory: Memory) -> str:
+def _format_remember_result(memory: RememberResult) -> str:
     if not memory.entities:
         return "Stored, but no entities were extracted from this content."
     entity_summary = ", ".join(f"{e.name} ({e.entity_type})" for e in memory.entities)
