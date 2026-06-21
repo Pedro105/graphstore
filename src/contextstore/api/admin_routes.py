@@ -42,6 +42,18 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/admin", dependencies=[Depends(require_admin)])
 
 
+# --- Auth check (token validation for the frontend gate) ---------------------
+
+
+@router.get("/auth")
+async def validate_admin_auth() -> dict[str, bool]:
+    """Lightweight token-validation probe. Reaching the handler means the router's
+    require_admin dependency already accepted the token (and the IP isn't locked
+    out), so the frontend can validate the operator's token once before mounting
+    any data page -- without fetching real data to do it."""
+    return {"ok": True}
+
+
 # --- Read: users & projects --------------------------------------------------
 
 

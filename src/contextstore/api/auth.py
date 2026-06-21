@@ -22,10 +22,12 @@ The `/v1/admin/*` namespace likewise uses `require_admin`, so X-Project never
 applies there.
 """
 
+import math
 import secrets
 from typing import Annotated
 from uuid import UUID
 
+import structlog
 from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
@@ -33,7 +35,19 @@ from contextstore.core.config import get_settings
 from contextstore.db import postgres
 from contextstore.db.postgres import Pool
 
+logger = structlog.get_logger()
+
 _BEARER_CHALLENGE = {"WWW-Authenticate": "Bearer"}
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort source IP for the admin brute-force limiter. Behind Fly's
+    proxy the real client is the first hop in X-Forwarded-For; fall back to the
+    direct peer for local/un-proxied runs."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 class AuthContext(BaseModel):
@@ -126,18 +140,55 @@ async def require_api_key(
     )
 
 
-def require_admin(authorization: str | None = Header(default=None)) -> None:
-    """Guard the operator-only key-management endpoints with the shared
-    ADMIN_TOKEN. Constant-time comparison so the token isn't discoverable by
-    timing. 503 if no admin token is configured (endpoints are then closed)."""
+def require_admin(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Guard the operator-only endpoints with the shared ADMIN_TOKEN.
+
+    Constant-time comparison so the token isn't discoverable by timing, plus an
+    in-process per-IP brute-force lock: after `admin_rate_limit_attempts` failed
+    attempts within the window, the source IP is locked out (429) and every
+    further request is refused *regardless of whether its token is correct* --
+    this denies both brute-forcing and the timing signal of a right-vs-wrong
+    token. Every failed attempt is logged at WARNING (the audit trail). 503 if no
+    admin token is configured (endpoints are then closed)."""
     settings = get_settings()
     if settings.admin_token is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Key management is not configured (ADMIN_TOKEN unset).",
         )
-    token = _bearer_token(authorization)
-    if not secrets.compare_digest(token, settings.admin_token.get_secret_value()):
+
+    # Lazy import: ratelimit imports this module, so importing it at module load
+    # would be circular.
+    from contextstore.api.ratelimit import _admin_failed_limiter
+
+    source_ip = _client_ip(request)
+    attempts = settings.admin_rate_limit_attempts
+    window = settings.admin_rate_limit_window_seconds
+
+    # Lock check runs BEFORE the token check, so a locked IP is refused even when
+    # the token happens to be correct (no timing oracle).
+    locked, retry_after = _admin_failed_limiter.is_locked(source_ip, attempts, window)
+    if locked:
+        logger.warning("admin_auth.locked_out", source_ip=source_ip, retry_after=retry_after)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed admin authentication attempts. Try again later.",
+            headers={"Retry-After": str(math.ceil(retry_after))},
+        )
+
+    try:
+        token = _bearer_token(authorization)
+        valid = secrets.compare_digest(token, settings.admin_token.get_secret_value())
+    except HTTPException:
+        # A missing/malformed header is itself a failed attempt.
+        valid = False
+
+    if not valid:
+        _admin_failed_limiter.record_failure(source_ip, window)
+        logger.warning("admin_auth.failed", source_ip=source_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin token.",

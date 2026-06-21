@@ -68,6 +68,10 @@ async function adminFetch<T>(
 }
 
 export const adminApi = {
+  // Lightweight token check (GET /v1/admin/auth) the gate runs before mounting
+  // any data page. Resolves on a valid token; throws (401 invalid / 429 locked
+  // out) otherwise.
+  validate: (token: string) => adminFetch<{ ok: boolean }>("/auth", token),
   listUsers: (token: string) => adminFetch<AdminUser[]>("/users", token),
   listProjects: (token: string) =>
     adminFetch<AdminProject[]>("/projects", token),

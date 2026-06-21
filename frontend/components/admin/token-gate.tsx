@@ -1,24 +1,26 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { ShieldAlert } from "lucide-react";
+import { Loader2, ShieldAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdminAuth } from "@/lib/admin/auth";
 
-// Shown whenever there is no admin token in the session (first visit, or after a
-// 401 cleared it). Collects the ADMIN_TOKEN and hands it to the auth context;
-// the token never goes to localStorage.
+// The only thing rendered for an unauthenticated/unvalidated visit. Collects the
+// ADMIN_TOKEN and hands it to the auth context, which validates it against the
+// backend before any data page is allowed to mount. The token never goes to
+// localStorage.
 export function TokenGate() {
-  const { setToken } = useAdminAuth();
+  const { submit, status, error } = useAdminAuth();
   const [value, setValue] = useState("");
+  const validating = status === "validating";
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmed = value.trim();
-    if (trimmed) setToken(trimmed);
+    if (trimmed && !validating) submit(trimmed);
   }
 
   return (
@@ -48,10 +50,27 @@ export function TokenGate() {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="paste ADMIN_TOKEN"
-          className="mb-4"
+          disabled={validating}
+          className="mb-2"
         />
-        <Button type="submit" className="w-full" disabled={!value.trim()}>
-          Enter console
+        {error ? (
+          <p className="mb-3 text-sm text-destructive">{error}</p>
+        ) : (
+          <div className="mb-3" />
+        )}
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={!value.trim() || validating}
+        >
+          {validating ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Validating…
+            </>
+          ) : (
+            "Enter console"
+          )}
         </Button>
       </form>
     </div>

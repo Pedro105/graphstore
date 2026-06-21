@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from contextstore.api import auth
+from contextstore.api import ratelimit
 from contextstore.api.auth import get_db
 from contextstore.api.dependencies import get_graph_store
 from contextstore.db import postgres
@@ -37,6 +38,8 @@ ADMIN_HEADERS = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
 
 class _FakeSettings:
     admin_token = SecretStr(ADMIN_TOKEN)
+    admin_rate_limit_attempts = 5
+    admin_rate_limit_window_seconds = 900
 
 
 @pytest.fixture
@@ -47,6 +50,15 @@ def pool():
 @pytest.fixture
 def graph_store():
     return AsyncMock(spec=GraphStore)
+
+
+@pytest.fixture(autouse=True)
+def fresh_admin_limiter(monkeypatch):
+    # Each test gets a clean per-IP failure limiter so accumulated failures from
+    # one test can't lock out another (all TestClient requests share an IP).
+    from contextstore.api.ratelimit import FailedAttemptLimiter
+
+    monkeypatch.setattr(ratelimit, "_admin_failed_limiter", FailedAttemptLimiter())
 
 
 @pytest.fixture
@@ -237,6 +249,43 @@ def test_revoke_any_key_404_when_absent(client, monkeypatch):
     monkeypatch.setattr(postgres, "revoke_api_key", AsyncMock(return_value=False))
     resp = client.delete(f"/v1/admin/api-keys/{uuid4()}", headers=ADMIN_HEADERS)
     assert resp.status_code == 404
+
+
+# --- Admin brute-force lockout (through the real require_admin dependency) ----
+
+
+def test_admin_auth_validation_endpoint(client):
+    # The frontend validates the token against this before mounting any data page.
+    resp = client.get("/v1/admin/auth", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200 and resp.json() == {"ok": True}
+
+
+def test_repeated_failures_lock_out_even_a_correct_token(client):
+    # 5 wrong tokens (the default threshold) exhaust the limit...
+    for _ in range(5):
+        assert (
+            client.get("/v1/admin/users", headers={"Authorization": "Bearer wrong"}).status_code
+            == 401
+        )
+    # ...the 6th attempt is locked out (429) -- and crucially, even the CORRECT
+    # token is now refused, so there's no timing oracle for the attacker.
+    resp = client.get("/v1/admin/users", headers=ADMIN_HEADERS)
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+
+
+def test_lockout_is_per_ip(client, pool):
+    pool.fetch.return_value = []  # the unaffected IP's request reaches list_users
+    # Lock out the default TestClient IP.
+    for _ in range(5):
+        client.get("/v1/admin/users", headers={"Authorization": "Bearer wrong"})
+    assert client.get("/v1/admin/users", headers=ADMIN_HEADERS).status_code == 429
+    # A request from a different IP (via X-Forwarded-For) is unaffected.
+    resp = client.get(
+        "/v1/admin/users",
+        headers={**ADMIN_HEADERS, "X-Forwarded-For": "203.0.113.9"},
+    )
+    assert resp.status_code == 200
 
 
 # --- Analytics & sources -----------------------------------------------------

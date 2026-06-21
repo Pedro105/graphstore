@@ -14,6 +14,12 @@ async function proxy(
   path: string[],
   method: "GET" | "DELETE",
 ): Promise<Response> {
+  // Same kill switch as the /admin UI: with ENABLE_ADMIN_UI=false there is no
+  // admin surface at all on this deployment, not just no pages. (The backend
+  // still independently enforces the admin token + lockout regardless.)
+  if (process.env.ENABLE_ADMIN_UI === "false") {
+    return new Response("Not found", { status: 404 });
+  }
   const search = new URL(req.url).search;
   const upstream = await forwardAdminToFastapi(
     `/v1/admin/${path.join("/")}${search}`,

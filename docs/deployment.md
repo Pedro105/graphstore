@@ -260,6 +260,54 @@ local). `.env.example` holds placeholders only. The full secret set:
 | `ANTHROPIC_API_KEY` | api | extraction / classifier / synthesis |
 | `OPENAI_API_KEY` | api | embeddings |
 | `DATABASE_URL` | api | Supabase asyncpg DSN (auth) |
-| `ADMIN_TOKEN` | api | guards `/v1/keys` |
+| `ADMIN_TOKEN` | api | guards `/v1/keys` and the whole `/v1/admin/*` namespace |
 | `FALKORDB_PASSWORD` | api | must equal FalkorDB's `--requirepass` |
 | `REDIS_ARGS` | falkordb | contains `--requirepass <pw>` + persistence flags |
+
+## Admin UI hardening
+
+The operator admin console (`/admin` in the frontend, backed by `/v1/admin/*`)
+is protected three ways:
+
+**1. Admin token + brute-force lockout (backend, always on).** Every
+`/v1/admin/*` request must carry the `ADMIN_TOKEN` as a Bearer token, compared
+in constant time. After repeated failures from one source IP the IP is locked
+out and every further request is refused with `429` — *even if the token is then
+correct* — which defeats both brute-forcing and right-vs-wrong-token timing.
+Every failed attempt is logged at WARNING (`admin_auth.failed` /
+`admin_auth.locked_out`, with `source_ip`). Tunable, sensible defaults:
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `ADMIN_RATE_LIMIT_ATTEMPTS` | `5` | failed attempts before lockout |
+| `ADMIN_RATE_LIMIT_WINDOW_SECONDS` | `900` | lockout / counting window (15 min) |
+
+The limiter is in-process and per-IP; behind Fly it reads the first hop of
+`X-Forwarded-For`. (A multi-instance deployment would move it to a shared store,
+the same as the per-key request limiter.)
+
+**2. Validated gate (frontend).** No admin data page mounts or fetches until the
+entered token is validated against the backend (`GET /v1/admin/auth`). An
+unauthenticated visit renders only the token-entry form.
+
+**3. `ENABLE_ADMIN_UI` kill switch (frontend).** Controls whether the admin
+surface exists on a given deployment at all.
+
+| Var | Default | Effect |
+| --- | --- | --- |
+| `ENABLE_ADMIN_UI` | *(unset → enabled)* | unset or any value other than `"false"` serves `/admin` as today |
+| `ENABLE_ADMIN_UI=false` | — | `/admin` and every sub-route return a genuine `404`, and the `/api/admin/*` proxy 404s too — no admin surface on that deployment |
+
+It is read at **request time** (the admin layout is `force-dynamic`), so you flip
+it per deployment without a rebuild. It defaults **on** so nothing changes for
+local/operator use.
+
+> **Recommendation:** explicitly set `ENABLE_ADMIN_UI=false` on any
+> **public-facing** frontend deployment. Serve the admin console only from a
+> private/operator deployment where the flag is left on.
+>
+> **Next-level hardening (not built yet):** move `/admin` to a **separate
+> subdomain or deployment entirely** (e.g. an internal-only app), so the admin
+> UI and its proxy never ship in the same artifact as the public site. The
+> `ENABLE_ADMIN_UI` flag is the lightweight stand-in for that until it's worth
+> the extra deployment.

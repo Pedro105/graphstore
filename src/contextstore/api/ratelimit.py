@@ -61,6 +61,56 @@ class SlidingWindowRateLimiter:
 _limiter = SlidingWindowRateLimiter()
 
 
+class FailedAttemptLimiter:
+    """Locks a key out after too many failures in a sliding window.
+
+    Unlike SlidingWindowRateLimiter (which counts *all* requests), this counts
+    only recorded *failures* -- a successful auth never touches it. Used to make
+    the operator admin token (api/auth.require_admin) non-brute-forceable: once a
+    source IP is locked, even a request bearing the correct token is refused,
+    which also denies an attacker the timing signal of "right vs wrong token".
+
+    Limits are passed per call rather than fixed at construction so they can be
+    read from settings at request time (and so tests can be explicit/deterministic).
+    `clock` is injectable for deterministic tests.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._failures: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = Lock()
+
+    def _prune(self, hits: deque[float], window_seconds: float) -> None:
+        cutoff = self._clock() - window_seconds
+        while hits and hits[0] <= cutoff:
+            hits.popleft()
+
+    def is_locked(self, key: str, max_attempts: int, window_seconds: float) -> tuple[bool, float]:
+        """Whether `key` is currently locked out, and for how many more seconds.
+
+        Read-only: does not record anything (so checking the lock can't itself
+        trip it). Locked when the count of non-expired failures has reached
+        `max_attempts`."""
+        with self._lock:
+            hits = self._failures[key]
+            self._prune(hits, window_seconds)
+            if len(hits) >= max_attempts:
+                retry_after = window_seconds - (self._clock() - hits[0])
+                return True, max(retry_after, 0.0)
+            return False, 0.0
+
+    def record_failure(self, key: str, window_seconds: float) -> None:
+        """Record one failed attempt for `key`."""
+        with self._lock:
+            hits = self._failures[key]
+            self._prune(hits, window_seconds)
+            hits.append(self._clock())
+
+
+# Process-wide failed-admin-auth limiter, keyed by source IP.
+_admin_failed_limiter = FailedAttemptLimiter()
+
+
 def rate_limited(endpoint: str, limit_getter: Callable[[], int]) -> Callable[..., object]:
     """Build a dependency that enforces this endpoint's per-key limit, then
     returns the AuthContext so the route still receives it. `limit_getter` reads

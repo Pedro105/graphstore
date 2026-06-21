@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     rate_limit_recall: int = 60
     rate_limit_memories: int = 30
 
+    # Brute-force protection on the operator admin token (api/auth.require_admin):
+    # after this many failed admin auth attempts from one source IP within the
+    # window, every further attempt is locked out (429) regardless of token
+    # correctness, until the window elapses. In-process, per-IP.
+    admin_rate_limit_attempts: int = 5
+    admin_rate_limit_window_seconds: int = 900  # 15 minutes
+
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536
     extraction_model: str = "claude-haiku-4-5-20251001"

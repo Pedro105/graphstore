@@ -71,24 +71,34 @@ async def test_require_api_key_invalid_key_401(monkeypatch):
 
 
 def _settings_with_admin(token):
-    return SimpleNamespace(admin_token=SecretStr(token) if token is not None else None)
+    return SimpleNamespace(
+        admin_token=SecretStr(token) if token is not None else None,
+        admin_rate_limit_attempts=5,
+        admin_rate_limit_window_seconds=900,
+    )
+
+
+def _fake_request(ip="1.2.3.4"):
+    # require_admin reads only request.headers (x-forwarded-for) and request.client.host.
+    return SimpleNamespace(headers={}, client=SimpleNamespace(host=ip))
 
 
 def test_require_admin_valid(monkeypatch):
     monkeypatch.setattr(auth, "get_settings", lambda: _settings_with_admin("s3cret"))
-    # Returns None (no raise) on a correct token.
-    assert auth.require_admin(authorization="Bearer s3cret") is None
+    # Returns None (no raise) on a correct token. Distinct IP so other tests'
+    # recorded failures can't lock this one out.
+    assert auth.require_admin(_fake_request("10.0.0.1"), authorization="Bearer s3cret") is None
 
 
 def test_require_admin_wrong_token_401(monkeypatch):
     monkeypatch.setattr(auth, "get_settings", lambda: _settings_with_admin("s3cret"))
     with pytest.raises(HTTPException) as exc:
-        auth.require_admin(authorization="Bearer wrong")
+        auth.require_admin(_fake_request("10.0.0.2"), authorization="Bearer wrong")
     assert exc.value.status_code == 401
 
 
 def test_require_admin_unconfigured_503(monkeypatch):
     monkeypatch.setattr(auth, "get_settings", lambda: _settings_with_admin(None))
     with pytest.raises(HTTPException) as exc:
-        auth.require_admin(authorization="Bearer anything")
+        auth.require_admin(_fake_request("10.0.0.3"), authorization="Bearer anything")
     assert exc.value.status_code == 503

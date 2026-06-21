@@ -68,12 +68,14 @@ function AdminHeader() {
   );
 }
 
-// Gates the whole admin area on a token and frames it with an unmistakably
-// distinct (amber, "ADMIN"-badged) chrome so it can never be confused with the
-// regular user dashboard.
+// Gates the whole admin area on a *validated* token and frames it with an
+// unmistakably distinct (amber, "ADMIN"-badged) chrome so it can never be
+// confused with the regular user dashboard. Children (the data pages) render
+// only once the backend has confirmed the token (status === "ok") -- so no
+// chart/table component mounts or fetches before authentication succeeds.
 export function AdminShell({ children }: { children: ReactNode }) {
-  const { token } = useAdminAuth();
-  if (!token) return <TokenGate />;
+  const { status } = useAdminAuth();
+  if (status !== "ok") return <TokenGate />;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
