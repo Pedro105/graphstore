@@ -1,0 +1,46 @@
+---
+title: "MCP server"
+description: "Add remember and recall as native tools in Claude Code and Claude Desktop."
+---
+
+ContextStore ships an MCP server that exposes `remember` and `recall` as native
+tools. It's a thin client over the HTTP API: set your API key and base URL, and
+the tenant is derived from the key — the MCP server never sends a tenant itself.
+
+<Note>
+  The server reads `CONTEXTSTORE_API_KEY` (your `csk_live_…`) and
+  `CONTEXTSTORE_API_URL` (your deployment's base URL).
+</Note>
+
+## Claude Code
+
+One command registers it:
+
+```bash
+claude mcp add contextstore \
+  --env CONTEXTSTORE_API_KEY=csk_live_your_key_here \
+  --env CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev \
+  -- contextstore-mcp
+```
+
+## Claude Desktop
+
+Add the server to `claude_desktop_config.json` (or a project-local `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "contextstore": {
+      "command": "contextstore-mcp",
+      "env": {
+        "CONTEXTSTORE_API_KEY": "csk_live_your_key_here",
+        "CONTEXTSTORE_API_URL": "https://contextstore-api.fly.dev"
+      }
+    }
+  }
+}
+```
+
+Once registered, your Claude agents can call `contextstore_remember` and
+`contextstore_recall` directly — every write and query flows through the same
+graph as the HTTP API.

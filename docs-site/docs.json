@@ -1,0 +1,47 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "ContextStore",
+  "description": "GraphRAG memory layer for AI agents and workflows.",
+  "colors": {
+    "primary": "#2563EB",
+    "light": "#60A5FA",
+    "dark": "#1D4ED8"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["index", "authentication", "projects", "mcp"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "openapi": "https://contextstore-api.fly.dev/openapi.json",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": ["POST /v1/memories", "POST /v1/recall"]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Dashboard",
+        "href": "https://contextstore-api.fly.dev"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Pedro105/graphstore"
+    }
+  }
+}

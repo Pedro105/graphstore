@@ -1,0 +1,44 @@
+---
+title: "Authentication"
+description: "Every request authenticates with a Bearer API key; the tenant is derived from the key."
+---
+
+ContextStore authenticates every `/v1/*` request with an API key sent as a
+Bearer token:
+
+```bash
+curl https://contextstore-api.fly.dev/v1/projects \
+  -H "Authorization: Bearer csk_live_your_key_here"
+```
+
+Keys look like `csk_live_…`. The key resolves **server-side** to a user and a
+default project (tenant), so you never send a tenant or scope in the request
+body — this is what makes tenant isolation enforceable rather than advisory.
+
+## Getting a key
+
+<AccordionGroup>
+  <Accordion title="Create a project (self-service)">
+    `POST /v1/projects` creates a new isolated graph and returns a key scoped to
+    it. The key is shown **once** and is not retrievable later. See
+    [Projects](/projects).
+  </Accordion>
+  <Accordion title="Operator-issued key">
+    An operator can mint a key for your user and tenant via the admin-only
+    `POST /v1/keys` endpoint.
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Treat keys as secrets. Store the plaintext when it's issued — only a hash is
+  kept server-side, so a lost key cannot be recovered (revoke and mint a new
+  one).
+</Warning>
+
+## Errors
+
+| Status | Meaning |
+| --- | --- |
+| `401` | Missing, malformed, invalid, or revoked key. |
+| `403` | Valid key, but you don't own the project named in `X-Project` (see [Projects](/projects)). |
+| `429` | Per-key rate limit exceeded — retry after the `Retry-After` header. |

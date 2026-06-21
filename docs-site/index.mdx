@@ -1,0 +1,75 @@
+---
+title: "ContextStore"
+description: "A GraphRAG memory layer for AI agents: write natural language, query a knowledge graph back."
+---
+
+ContextStore gives your agents, scheduled jobs, and AI features a shared,
+queryable memory. You **write** natural-language facts; ContextStore extracts
+entities and relations into a per-tenant knowledge graph. You **recall** with a
+natural-language question; it seeds entities (hybrid vector + full-text),
+traverses the graph, and returns the connected subgraph — optionally synthesized
+into a natural-language answer.
+
+Every fact carries provenance (which source wrote it, when), and each project is
+a structurally isolated graph.
+
+## The core flow
+
+<Steps>
+  <Step title="Write a memory">
+    POST natural-language text to `/v1/memories`. ContextStore extracts and
+    resolves entities and relations automatically.
+  </Step>
+  <Step title="Recall it back">
+    POST a question to `/v1/recall`. You get the relevant subgraph plus
+    `stats` describing how the query was answered.
+  </Step>
+</Steps>
+
+## Quick start
+
+<CodeGroup>
+
+```bash Write
+curl -X POST https://contextstore-api.fly.dev/v1/memories \
+  -H "Authorization: Bearer csk_live_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Globex raised its price for Product Y to $4.20 per unit.",
+    "source": "supplier-agent"
+  }'
+```
+
+```bash Recall
+curl -X POST https://contextstore-api.fly.dev/v1/recall \
+  -H "Authorization: Bearer csk_live_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is the unit price of Product Y?",
+    "synthesise": true
+  }'
+```
+
+</CodeGroup>
+
+<Note>
+  `tenant_id` is never sent in the request body — it is derived from your API
+  key. See [Authentication](/authentication).
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Get an API key and use the Bearer header.
+  </Card>
+  <Card title="Projects" icon="folder-tree" href="/projects">
+    Run multiple isolated graphs under one account.
+  </Card>
+  <Card title="MCP server" icon="plug" href="/mcp">
+    Add remember/recall as native tools in Claude Code or Claude Desktop.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/create-memory">
+    Full request/response shapes, generated from the live OpenAPI spec.
+  </Card>
+</CardGroup>

@@ -1,0 +1,59 @@
+---
+title: "Projects"
+description: "Run multiple isolated knowledge graphs under one account, and switch between them per request."
+---
+
+A **project** is one structurally isolated knowledge graph (its own `tenant_id`).
+A single user can own many projects — separate clients, experiments, or
+environments that never bleed into each other.
+
+## Create a project
+
+`POST /v1/projects` creates a new graph and mints an API key scoped to it.
+
+```bash
+curl -X POST https://contextstore-api.fly.dev/v1/projects \
+  -H "Authorization: Bearer csk_live_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Research" }'
+```
+
+```json Response (201)
+{
+  "id": "1b2f…",
+  "tenant_id": "proj_4e8a6cd5…",
+  "name": "Research",
+  "api_key": "csk_live_… (store this now — not retrievable later)"
+}
+```
+
+## List your projects
+
+```bash
+curl https://contextstore-api.fly.dev/v1/projects \
+  -H "Authorization: Bearer csk_live_your_key_here"
+```
+
+Returns the projects owned by the authenticated user.
+
+## Switching projects with `X-Project`
+
+One key can act on **any other project the same user owns** by sending an
+`X-Project: <tenant_id>` header. The server verifies ownership on **every
+request** before touching any data — a project you don't own returns `403`
+(and an unknown project returns the same `403`, never revealing whether it
+exists).
+
+```bash
+curl -X POST https://contextstore-api.fly.dev/v1/recall \
+  -H "Authorization: Bearer csk_live_your_key_here" \
+  -H "X-Project: proj_4e8a6cd5…" \
+  -H "Content-Type: application/json" \
+  -d '{ "query": "What does Acme need?" }'
+```
+
+<Note>
+  Without an `X-Project` header, requests act on the key's own default project.
+  With one, they act on the named project — ownership-checked, never trusting
+  the header on its own.
+</Note>
