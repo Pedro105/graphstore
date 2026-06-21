@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { Cormorant_Garamond, Geist_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { Cormorant_Garamond, Geist_Mono, Quicksand } from "next/font/google";
 import "./globals.css";
 
-const jakarta = Plus_Jakarta_Sans({
+const quicksand = Quicksand({
   variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -33,7 +34,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${jakarta.variable} ${geistMono.variable} ${cormorant.variable} antialiased`}
+        className={`${quicksand.variable} ${geistMono.variable} ${cormorant.variable} antialiased`}
       >
         {children}
       </body>

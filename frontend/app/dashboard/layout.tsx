@@ -7,9 +7,9 @@ import { WorkspaceProvider } from "@/lib/dashboard/workspace";
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <WorkspaceProvider>
-      <div className="flex min-h-screen bg-background text-foreground">
-        <aside className="flex w-60 shrink-0 flex-col border-r border-border p-4">
-          <div className="mb-4 px-2 text-lg font-semibold tracking-tight">
+      <div className="dashboard-theme flex min-h-screen bg-background font-sans text-foreground">
+        <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar p-4">
+          <div className="mb-4 px-2 text-lg font-semibold tracking-tight text-foreground">
             ContextStore
           </div>
           {/* Workspace switcher above the nav: switching it changes which
@@ -17,7 +17,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <WorkspaceSwitcher />
           <SidebarNav />
         </aside>
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        <main className="min-w-0 flex-1 overflow-y-auto bg-background">
           <div className="mx-auto max-w-6xl p-8">{children}</div>
         </main>
       </div>

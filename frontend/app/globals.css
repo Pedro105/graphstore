@@ -96,6 +96,48 @@
   --sidebar-ring: var(--palette-accent-warm);
 }
 
+/* Dashboard workspace — white, professional; landing palette accents preserved */
+.dashboard-theme {
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+  --card: #ffffff;
+  --card-foreground: #1a1a1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a1a;
+  --primary: #1a1a1a;
+  --primary-foreground: #ffffff;
+  --secondary: #f7f7f6;
+  --secondary-foreground: #1a1a1a;
+  --muted: #f5f5f4;
+  --muted-foreground: #6b6b6b;
+  --accent: var(--palette-accent);
+  --accent-foreground: #1a1a1a;
+  --border: #ebe6e1;
+  --input: #ebe6e1;
+  --ring: var(--palette-accent-warm);
+  --sidebar: #fafafa;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #1a1a1a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--palette-accent);
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: #ebe6e1;
+  --sidebar-ring: var(--palette-accent-warm);
+
+  font-family: var(--font-sans);
+}
+
+.dashboard-theme h1,
+.dashboard-theme h2,
+.dashboard-theme h3,
+.dashboard-theme h4,
+.dashboard-theme h5,
+.dashboard-theme h6,
+.dashboard-theme [data-slot="card-title"] {
+  font-family: var(--font-sans);
+  letter-spacing: -0.015em;
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
