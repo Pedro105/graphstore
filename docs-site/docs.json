@@ -4,9 +4,9 @@
   "name": "ContextStore",
   "description": "GraphRAG memory layer for AI agents and workflows.",
   "colors": {
-    "primary": "#2563EB",
-    "light": "#60A5FA",
-    "dark": "#1D4ED8"
+    "primary": "#9b7e54",
+    "light": "#d9cfc7",
+    "dark": "#8a6f49"
   },
   "navigation": {
     "tabs": [
