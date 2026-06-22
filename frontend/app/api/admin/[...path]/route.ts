@@ -9,6 +9,9 @@ import type { NextRequest } from "next/server";
 
 import { forwardAdminToFastapi, relayResponse } from "@/lib/api/fastapi";
 
+// Runs as a Cloudflare Pages edge function (@cloudflare/next-on-pages).
+export const runtime = "edge";
+
 async function proxy(
   req: NextRequest,
   path: string[],

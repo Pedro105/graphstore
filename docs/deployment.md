@@ -2,8 +2,10 @@
 
 How the ContextStore **backend** is containerized and deployed to Fly.io, and
 how the self-hosted **FalkorDB** instance it depends on is run. Supabase
-(Postgres) is already hosted and is not managed here. The frontend stays local
-for now (separate future task).
+(Postgres) is already hosted and is not managed here. The **frontend** deploys
+separately to Cloudflare Pages — see
+[Frontend deployment (Cloudflare Pages)](#frontend-deployment-cloudflare-pages)
+at the end of this doc.
 
 ## Topology
 
@@ -311,3 +313,96 @@ local/operator use.
 > UI and its proxy never ship in the same artifact as the public site. The
 > `ENABLE_ADMIN_UI` flag is the lightweight stand-in for that until it's worth
 > the extra deployment.
+
+# Frontend deployment (Cloudflare Pages)
+
+The Next.js frontend (`frontend/`) deploys to **Cloudflare Pages** with Workers
+support, so its server-side route handlers run as edge functions. Those
+handlers (`frontend/app/api/*`) are the only thing that talks to the backend:
+the browser calls the Next.js app's own `/api/*` routes, and each route forwards
+to FastAPI server-side, attaching `CONTEXTSTORE_API_KEY` as a Bearer token. The
+key has no `NEXT_PUBLIC_` prefix and is injected only in `lib/api/fastapi.ts`, so
+**it never reaches the browser** — it lives only as a Cloudflare environment
+variable.
+
+The adapter is [`@cloudflare/next-on-pages`](https://github.com/cloudflare/next-on-pages):
+`pnpm build:cf` compiles the app into `.vercel/output/static/` (the Pages build
+output). Because next-on-pages runs everything on the **Edge runtime**, every
+dynamic route declares `export const runtime = "edge"` — the `app/api/*` route
+handlers each set it, and the `/admin` routes (client components, which can't
+carry route-segment config themselves) inherit it from `app/admin/layout.tsx`.
+
+> next-on-pages is deprecated in favour of the OpenNext adapter
+> (`@opennextjs/cloudflare`), but OpenNext targets Cloudflare **Workers**, not
+> Pages. We stay on Pages deliberately, so next-on-pages remains the adapter.
+
+## Branch workflow
+
+Solo two-branch flow. Cloudflare auto-deploys both branches, so every change is
+verifiable on a live URL before it reaches production.
+
+- **`dev`** — active development branch. All work happens here. Cloudflare Pages
+  auto-deploys every push to `dev` to a unique **preview URL**, so changes can be
+  verified live *before* they touch production.
+- **`main`** — production branch. Only updated by merging `dev` via a PR.
+  Cloudflare Pages auto-deploys `main` to the live **public URL**.
+
+**Loop:** commit to `dev` → check the Cloudflare preview URL → open a PR
+(`dev` → `main`) → merge → production auto-deploys.
+
+**Never commit directly to `main`.**
+
+**GitHub branch protection (recommended):** Settings → Branches → Add rule for
+`main` → *Require a pull request before merging*, with **0 required approvers**
+(solo dev — the PR exists for diff review, not approval gating).
+
+## Local development with `.dev.vars`
+
+Cloudflare reads local env from `frontend/.dev.vars` (gitignored — never
+committed; a template with empty secret values is in the repo working tree).
+Populate it to run the Pages build/runtime locally:
+
+```
+CONTEXTSTORE_API_KEY=csk_live_...          # your real key (local only)
+CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev
+ADMIN_TOKEN=...                            # operator admin token
+ENABLE_ADMIN_UI=false
+```
+
+`pnpm dev` still uses `.env.local` as before; `.dev.vars` is for the
+Cloudflare/Workers local runtime and the deployed environment-variable shape.
+
+## Cloudflare Pages setup (manual dashboard steps)
+
+These require Pedro's Cloudflare account and are **not** automatable from here.
+Do them once:
+
+1. Cloudflare dashboard → **Workers & Pages** → **Create application** →
+   **Pages** → **Connect to Git**.
+2. When prompted, **install the Cloudflare GitHub App** (this is separate from
+   the Mintlify GitHub App — it needs its own installation).
+3. Select the **`contextstore`** private repo.
+4. **Root directory:** `frontend`
+5. **Build command:** `pnpm build:cf`
+6. **Build output directory:** `.vercel/output/static`
+7. **Production branch:** `main`
+8. Add **`dev`** as a **preview branch** — Cloudflare then auto-deploys every
+   push to `dev` to a unique preview URL.
+9. Add these **environment variables** (set in **both** Production and Preview
+   environments unless noted):
+
+   | Variable | Value |
+   | --- | --- |
+   | `CONTEXTSTORE_API_KEY` | your real `csk_live_...` key |
+   | `CONTEXTSTORE_API_URL` | `https://contextstore-api.fly.dev` |
+   | `ADMIN_TOKEN` | your operator admin token |
+   | `ENABLE_ADMIN_UI` | **`false`** for Production; optionally `true` in Preview if you want admin access on the preview URL |
+   | `NODE_VERSION` | `20` (or whatever `frontend/package.json` requires) |
+
+10. **Save and trigger** the first build. Watch the build log; paste any errors
+    back for diagnosis.
+
+> **Security:** keep `ENABLE_ADMIN_UI=false` in Production — it 404s `/admin` and
+> the `/api/admin/*` proxy on the public deployment (see *Admin UI hardening*
+> above). `CONTEXTSTORE_API_KEY` lives only as a Cloudflare env var, never in the
+> repo or any client bundle.

@@ -8,6 +8,12 @@ import { AdminAuthProvider } from "@/lib/admin/auth";
 // build -- Pedro can flip it on a deployment without rebuilding.
 export const dynamic = "force-dynamic";
 
+// Every /admin page is a client component, which can't carry route-segment
+// config itself; declaring the edge runtime here on the (server) layout applies
+// it to all admin routes, satisfying @cloudflare/next-on-pages' requirement
+// that every dynamic route run on the edge.
+export const runtime = "edge";
+
 // The operator admin area is a completely separate tree from /dashboard: its
 // own auth (the validated ADMIN_TOKEN gate in AdminShell), its own chrome, no
 // shared session with the regular user flow.

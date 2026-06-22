@@ -8,6 +8,9 @@ import { forwardToFastapi, relayResponse } from "@/lib/api/fastapi";
 // cookie points at a since-deleted project (otherwise the very call used to
 // recover the switcher could 403).
 
+// Runs as a Cloudflare Pages edge function (@cloudflare/next-on-pages).
+export const runtime = "edge";
+
 export async function GET() {
   const upstream = await forwardToFastapi("/v1/projects", undefined, false);
   return relayResponse(upstream);

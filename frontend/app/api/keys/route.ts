@@ -1,5 +1,8 @@
 import { forwardToFastapi, relayResponse } from "@/lib/api/fastapi";
 
+// Runs as a Cloudflare Pages edge function (@cloudflare/next-on-pages).
+export const runtime = "edge";
+
 export async function GET() {
   // Lists the authenticated tenant's own keys (safe metadata only -- the
   // backend never returns the hash or the raw key).
