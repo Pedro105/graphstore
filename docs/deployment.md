@@ -3,8 +3,8 @@
 How the ContextStore **backend** is containerized and deployed to Fly.io, and
 how the self-hosted **FalkorDB** instance it depends on is run. Supabase
 (Postgres) is already hosted and is not managed here. The **frontend** deploys
-separately to Cloudflare Pages — see
-[Frontend deployment (Cloudflare Pages)](#frontend-deployment-cloudflare-pages)
+separately to Cloudflare Workers (via OpenNext) — see
+[Frontend deployment (Cloudflare Workers, via OpenNext)](#frontend-deployment-cloudflare-workers-via-opennext)
 at the end of this doc.
 
 ## Topology
@@ -314,38 +314,40 @@ local/operator use.
 > `ENABLE_ADMIN_UI` flag is the lightweight stand-in for that until it's worth
 > the extra deployment.
 
-# Frontend deployment (Cloudflare Pages)
+# Frontend deployment (Cloudflare Workers, via OpenNext)
 
-The Next.js frontend (`frontend/`) deploys to **Cloudflare Pages** with Workers
-support, so its server-side route handlers run as edge functions. Those
-handlers (`frontend/app/api/*`) are the only thing that talks to the backend:
-the browser calls the Next.js app's own `/api/*` routes, and each route forwards
-to FastAPI server-side, attaching `CONTEXTSTORE_API_KEY` as a Bearer token. The
-key has no `NEXT_PUBLIC_` prefix and is injected only in `lib/api/fastapi.ts`, so
-**it never reaches the browser** — it lives only as a Cloudflare environment
-variable.
+The Next.js frontend (`frontend/`) deploys to **Cloudflare Workers** using the
+[OpenNext Cloudflare adapter](https://opennext.js.org/cloudflare)
+(`@opennextjs/cloudflare`) — the adapter Cloudflare's own docs recommend for
+full-stack SSR Next.js. (The older `@cloudflare/next-on-pages` Pages adapter is
+deprecated.) OpenNext runs the app in the **Node.js runtime** (`nodejs_compat`),
+so **no route declares `export const runtime = "edge"`** and the server-side
+proxy logic (cookies, headers, `fetch`) runs in its native mode.
 
-The adapter is [`@cloudflare/next-on-pages`](https://github.com/cloudflare/next-on-pages):
-`pnpm build:cf` compiles the app into `.vercel/output/static/` (the Pages build
-output). Because next-on-pages runs everything on the **Edge runtime**, every
-dynamic route declares `export const runtime = "edge"` — the `app/api/*` route
-handlers each set it, and the `/admin` routes (client components, which can't
-carry route-segment config themselves) inherit it from `app/admin/layout.tsx`.
+The server-side route handlers (`frontend/app/api/*`) are the only thing that
+talks to the backend: the browser calls the Next.js app's own `/api/*` routes,
+and each forwards to FastAPI server-side, attaching `CONTEXTSTORE_API_KEY` as a
+Bearer token. The key has no `NEXT_PUBLIC_` prefix and is injected only in
+`lib/api/fastapi.ts`, so **it never reaches the browser** — it lives only as a
+Cloudflare secret.
 
-> next-on-pages is deprecated in favour of the OpenNext adapter
-> (`@opennextjs/cloudflare`), but OpenNext targets Cloudflare **Workers**, not
-> Pages. We stay on Pages deliberately, so next-on-pages remains the adapter.
+`pnpm build:cf` runs `opennextjs-cloudflare build`, producing `.open-next/`
+(`worker.js` entry + bundled server + `assets/`). Config: `open-next.config.ts`
+(`defineCloudflareConfig()`) and `wrangler.toml` (`nodejs_compat`,
+`compatibility_date = "2024-09-23"`, `main = ".open-next/worker.js"`, and an
+`[assets]` binding). The bundled worker is ~1.2 MB gzipped — well under the
+Workers limits (3 MB free / 10 MB paid).
 
 ## Branch workflow
 
 Solo two-branch flow. Cloudflare auto-deploys both branches, so every change is
 verifiable on a live URL before it reaches production.
 
-- **`dev`** — active development branch. All work happens here. Cloudflare Pages
+- **`dev`** — active development branch. All work happens here. Cloudflare
   auto-deploys every push to `dev` to a unique **preview URL**, so changes can be
   verified live *before* they touch production.
 - **`main`** — production branch. Only updated by merging `dev` via a PR.
-  Cloudflare Pages auto-deploys `main` to the live **public URL**.
+  Cloudflare auto-deploys `main` to the live **public URL**.
 
 **Loop:** commit to `dev` → check the Cloudflare preview URL → open a PR
 (`dev` → `main`) → merge → production auto-deploys.
@@ -356,53 +358,70 @@ verifiable on a live URL before it reaches production.
 `main` → *Require a pull request before merging*, with **0 required approvers**
 (solo dev — the PR exists for diff review, not approval gating).
 
-## Local development with `.dev.vars`
+## Local development
 
-Cloudflare reads local env from `frontend/.dev.vars` (gitignored — never
-committed; a template with empty secret values is in the repo working tree).
-Populate it to run the Pages build/runtime locally:
+`pnpm dev` runs the normal Next dev server (it reads `.env.local` as before).
+To exercise the actual Workers build locally, `pnpm preview:cf` builds with
+OpenNext and serves the worker through Wrangler.
+
+The Workers runtime reads local env from `frontend/.dev.vars` (gitignored —
+never committed; a template with empty secret values is in the repo working
+tree):
 
 ```
 CONTEXTSTORE_API_KEY=csk_live_...          # your real key (local only)
 CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev
 ADMIN_TOKEN=...                            # operator admin token
 ENABLE_ADMIN_UI=false
+NEXTJS_ENV=development
 ```
 
-`pnpm dev` still uses `.env.local` as before; `.dev.vars` is for the
-Cloudflare/Workers local runtime and the deployed environment-variable shape.
+## First-time manual deploy
 
-## Cloudflare Pages setup (manual dashboard steps)
+Before Workers Builds is wired up, deploy once from your machine. This needs
+`wrangler login` first (interactive browser auth), then `pnpm deploy:cf`
+(`opennextjs-cloudflare build && wrangler deploy`) with the env vars inlined:
+
+```bash
+cd frontend
+npx wrangler login            # one-time, interactive
+CONTEXTSTORE_API_KEY=csk_live_... \
+CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev \
+ADMIN_TOKEN=your_token \
+ENABLE_ADMIN_UI=false \
+pnpm deploy:cf
+```
+
+## Workers Builds (automatic deploys on git push)
 
 These require Pedro's Cloudflare account and are **not** automatable from here.
-Do them once:
+Do them once. This is a **Workers** project (OpenNext), not Pages:
 
 1. Cloudflare dashboard → **Workers & Pages** → **Create application** →
-   **Pages** → **Connect to Git**.
-2. When prompted, **install the Cloudflare GitHub App** (this is separate from
-   the Mintlify GitHub App — it needs its own installation).
-3. Select the **`contextstore`** private repo.
-4. **Root directory:** `frontend`
-5. **Build command:** `pnpm build:cf`
-6. **Build output directory:** `.vercel/output/static`
-7. **Production branch:** `main`
-8. Add **`dev`** as a **preview branch** — Cloudflare then auto-deploys every
-   push to `dev` to a unique preview URL.
-9. Add these **environment variables** (set in **both** Production and Preview
-   environments unless noted):
+   **Worker** → **Connect to Git** (not Pages).
+2. **Install the Cloudflare GitHub App** (separate from the Mintlify GitHub App)
+   and grant it access to the **`contextstore`** repo.
+3. **Root directory:** `frontend`
+4. **Build command:** `pnpm build:cf`
+5. **Deploy command:** `wrangler deploy` (or leave blank if Workers Builds runs
+   it automatically — check the current UI).
+6. **Production branch:** `main`; **Preview branch:** `dev` (every push to `dev`
+   gets its own preview URL).
+7. Add these **environment variables / secrets** in **both** Production and
+   Preview (mark the keys as encrypted secrets):
 
    | Variable | Value |
    | --- | --- |
-   | `CONTEXTSTORE_API_KEY` | your real `csk_live_...` key |
+   | `CONTEXTSTORE_API_KEY` | your real `csk_live_...` key (secret) |
    | `CONTEXTSTORE_API_URL` | `https://contextstore-api.fly.dev` |
-   | `ADMIN_TOKEN` | your operator admin token |
-   | `ENABLE_ADMIN_UI` | **`false`** for Production; optionally `true` in Preview if you want admin access on the preview URL |
-   | `NODE_VERSION` | `20` (or whatever `frontend/package.json` requires) |
+   | `ADMIN_TOKEN` | your operator admin token (secret) |
+   | `ENABLE_ADMIN_UI` | **`false`** for Production; optionally `true` in Preview |
+   | `NODE_VERSION` | `20` |
 
-10. **Save and trigger** the first build. Watch the build log; paste any errors
-    back for diagnosis.
+8. **Save and trigger** the first build. Watch the build log; paste any errors
+   back for diagnosis.
 
 > **Security:** keep `ENABLE_ADMIN_UI=false` in Production — it 404s `/admin` and
 > the `/api/admin/*` proxy on the public deployment (see *Admin UI hardening*
-> above). `CONTEXTSTORE_API_KEY` lives only as a Cloudflare env var, never in the
+> above). `CONTEXTSTORE_API_KEY` lives only as a Cloudflare secret, never in the
 > repo or any client bundle.
