@@ -18,6 +18,19 @@ from contextstore.vector.embeddings import EmbeddingProvider
 _CANDIDATE_SEARCH_K = 5
 
 
+def _normalize_name(name: str) -> str:
+    """Identity key for catching trivial surface variants of one name.
+
+    Vector similarity alone is too brittle to dedup these: 'Ada Lovelace' vs
+    'Ada lovelace' embeds at only ~0.90 cosine with text-embedding-3-small --
+    below the 0.92 merge threshold -- so a one-letter case change would
+    otherwise spawn a duplicate entity, the exact failure entity resolution
+    exists to prevent. Collapsing case and surrounding/repeated whitespace
+    lets an exact name match force a merge regardless of the vector score.
+    """
+    return " ".join(name.split()).casefold()
+
+
 async def resolve_entity(
     extracted: ExtractedEntity,
     scope: Scope,
@@ -40,6 +53,16 @@ async def resolve_entity(
 
     merge_candidates = []
     if candidates:
+        # Exact-identity fast path: a same-type candidate whose name matches
+        # (modulo case/whitespace) is the same entity, so merge into it
+        # regardless of vector score. This is what makes surface-form variants
+        # of one name reliably dedup even when their embeddings fall just short
+        # of the merge threshold (see _normalize_name).
+        normalized = _normalize_name(extracted.name)
+        for candidate_entity, _score in candidates:
+            if _normalize_name(candidate_entity.name) == normalized:
+                return _merge_into_entity(candidate_entity, provenance, extracted.properties)
+
         best_entity, best_score = candidates[0]
         if best_score >= settings.vector_merge_threshold:
             return _merge_into_entity(best_entity, provenance, extracted.properties)

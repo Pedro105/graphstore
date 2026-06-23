@@ -149,6 +149,45 @@ async def test_threshold_boundaries(score, expect_reuse):
         assert result.merge_candidates == []
 
 
+async def test_same_name_different_case_merges_despite_subthreshold_score():
+    # Regression: 'Ada Lovelace' vs 'Ada lovelace' embeds at ~0.90 cosine,
+    # below the 0.92 merge threshold, so vector score alone would create a
+    # duplicate. An exact normalized-name match must force the merge.
+    existing = make_existing_entity(name="Ada Lovelace")
+    graph_store, embedding_provider = make_mocks([(existing, 0.9019)])
+    extracted = ExtractedEntity(name="Ada lovelace", entity_type="person")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id == existing.id
+    assert result.name == existing.name
+    assert result.merge_candidates == []
+    assert len(result.claims) == len(existing.claims) + 1
+
+
+async def test_same_name_extra_whitespace_merges():
+    existing = make_existing_entity(name="Ada Lovelace")
+    graph_store, embedding_provider = make_mocks([(existing, 0.88)])
+    extracted = ExtractedEntity(name="  Ada   Lovelace ", entity_type="person")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id == existing.id
+
+
+async def test_name_match_beats_a_higher_scored_different_name_candidate():
+    # The exact-name candidate need not be first in the list: a closer-by-vector
+    # but differently-named candidate must not win over an exact name match.
+    other = make_existing_entity(name="Ada Byron", entity_type="person")
+    exact = make_existing_entity(name="Ada Lovelace", entity_type="person")
+    graph_store, embedding_provider = make_mocks([(other, 0.91), (exact, 0.905)])
+    extracted = ExtractedEntity(name="ada lovelace", entity_type="person")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id == exact.id
+
+
 async def test_embeds_entity_type_and_name():
     graph_store, embedding_provider = make_mocks([])
 
