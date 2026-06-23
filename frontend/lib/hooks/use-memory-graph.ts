@@ -43,11 +43,11 @@ export function useMemoryGraph() {
     [reloadGraph],
   );
 
-  const runRecall = useCallback(async (query: string) => {
+  const runRecall = useCallback(async (query: string, synthesise = false) => {
     setRecalling(true);
     setRecallError(null);
     try {
-      const result = await recall({ query });
+      const result = await recall({ query, synthesise });
       setRecallResult(result);
     } catch (error) {
       setRecallError(errorMessage(error));

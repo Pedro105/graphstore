@@ -8,8 +8,11 @@ import { WorkspaceProvider } from "@/lib/dashboard/workspace";
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <WorkspaceProvider>
-      <div className="dashboard-theme flex min-h-screen bg-background font-sans text-foreground">
-        <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar p-4">
+      {/* h-screen + overflow-hidden pins the shell to the viewport so the page
+          itself never scrolls; only <main> scrolls. That keeps the sidebar
+          fixed at full screen height instead of scrolling away with content. */}
+      <div className="dashboard-theme flex h-screen overflow-hidden bg-background font-sans text-foreground">
+        <aside className="flex h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar p-4">
           <div className="mb-4 px-2 text-lg font-semibold tracking-tight text-foreground">
             ContextStore
           </div>

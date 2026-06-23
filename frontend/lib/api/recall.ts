@@ -9,6 +9,10 @@ export interface RecallInput {
   query: string;
   limit?: number;
   traversal_depth?: number;
+  // When true, ask the backend to synthesise a natural-language answer from the
+  // retrieved subgraph (returned as RecallResult.synthesis). Additive: the
+  // structured entities/relations come back regardless.
+  synthesise?: boolean;
 }
 
 export async function recall(input: RecallInput): Promise<RecallResult> {

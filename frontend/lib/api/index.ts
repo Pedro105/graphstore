@@ -30,6 +30,15 @@ export type { RecallInput } from "@/lib/api/recall";
 
 export { fetchGraph } from "@/lib/api/graph";
 
+export {
+  fetchAnalytics,
+  fetchActivity,
+  fetchSources,
+  fetchUsage,
+} from "@/lib/api/analytics";
+
+export { fetchEntityClaims } from "@/lib/api/claims";
+
 export { listAgents, createAgent, deleteAgent } from "@/lib/api/agents";
 export type { CreateAgentInput } from "@/lib/api/agents";
 export { listFrameworks, updateFramework } from "@/lib/api/frameworks";

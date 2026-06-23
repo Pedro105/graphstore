@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Database, KeyRound, LayoutDashboard, Target, Users, Workflow } from "lucide-react";
+import {
+  BarChart2,
+  Database,
+  KeyRound,
+  LayoutDashboard,
+  Target,
+  Users,
+  Workflow,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -13,6 +21,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/frameworks", label: "Frameworks", icon: Workflow },
   { href: "/dashboard/focus-areas", label: "Focus Areas", icon: Target },
   { href: "/dashboard/api-keys", label: "APIs", icon: KeyRound },
+  { href: "/dashboard/usage", label: "Usage", icon: BarChart2 },
 ];
 
 export function SidebarNav() {
@@ -21,7 +30,8 @@ export function SidebarNav() {
   return (
     <nav className="flex flex-col gap-1">
       {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-        const active = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+        const active =
+          href === "/dashboard" ? pathname === href : pathname.startsWith(href);
         return (
           <Link
             key={href}

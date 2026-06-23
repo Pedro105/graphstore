@@ -7,22 +7,33 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 interface IngestPanelProps {
   onIngest: (content: string, source: string) => Promise<void>;
   ingesting: boolean;
   error: string | null;
+  // Registered agent names, offered as quick-picks for the Source field so a
+  // write is attributed to a real agent rather than a typo'd free-text value.
+  agents: string[];
 }
 
-export function IngestPanel({ onIngest, ingesting, error }: IngestPanelProps) {
+const FALLBACK_SOURCE = "dashboard-demo";
+
+export function IngestPanel({
+  onIngest,
+  ingesting,
+  error,
+  agents,
+}: IngestPanelProps) {
   const [content, setContent] = useState("");
-  const [source, setSource] = useState("dashboard-demo");
+  const [source, setSource] = useState(FALLBACK_SOURCE);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmed = content.trim();
     if (!trimmed) return;
-    await onIngest(trimmed, source.trim() || "dashboard-demo");
+    await onIngest(trimmed, source.trim() || FALLBACK_SOURCE);
     setContent("");
   }
 
@@ -51,6 +62,27 @@ export function IngestPanel({ onIngest, ingesting, error }: IngestPanelProps) {
               onChange={(event) => setSource(event.target.value)}
               className="font-mono"
             />
+            {agents.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="text-xs text-muted-foreground">Write as:</span>
+                {agents.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => setSource(name)}
+                    className={cn(
+                      "rounded-full border px-2 py-0.5 font-mono text-[11px] transition-colors",
+                      source === name
+                        ? "border-transparent bg-data-accent text-data-accent-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                    aria-pressed={source === name}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <Button type="submit" disabled={ingesting || !content.trim()}>
             {ingesting ? "Extracting..." : "Remember"}

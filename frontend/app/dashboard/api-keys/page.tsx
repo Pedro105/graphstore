@@ -1,10 +1,11 @@
 "use client";
 
-import { Loader2, Trash2Icon } from "lucide-react";
+import { KeyRound, Trash2Icon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useApiKeys } from "@/lib/hooks/use-api-keys";
 
 function formatDate(value: string | null): string {
@@ -21,8 +22,8 @@ export default function ApiKeysPage() {
       <div>
         <h1 className="text-2xl font-semibold">API Keys</h1>
         <p className="text-muted-foreground">
-          Keys that grant programmatic access to your tenant. New keys are issued by an operator;
-          you can review and revoke existing keys here.
+          Keys that grant programmatic access to your tenant. New keys are
+          issued by an operator; you can review and revoke existing keys here.
         </p>
       </div>
 
@@ -36,15 +37,26 @@ export default function ApiKeysPage() {
           </CardContent>
         </Card>
       ) : loading ? (
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" /> Loading keys...
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i} size="sm">
+              <CardContent className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-56" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       ) : apiKeys.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-10 text-center">
+            <KeyRound className="size-6 text-muted-foreground" />
             <p className="font-medium">No keys yet</p>
             <p className="max-w-sm text-sm text-muted-foreground">
-              Ask an operator to issue an API key for this tenant -- it&apos;ll show up here.
+              Ask an operator to issue an API key for this tenant -- it&apos;ll
+              show up here.
             </p>
           </CardContent>
         </Card>
@@ -57,7 +69,9 @@ export default function ApiKeysPage() {
                 <CardContent className="flex items-center justify-between gap-3">
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{apiKey.name ?? "Unnamed key"}</span>
+                      <span className="text-sm font-medium">
+                        {apiKey.name ?? "Unnamed key"}
+                      </span>
                       {revoked && <Badge variant="outline">Revoked</Badge>}
                     </div>
                     <span className="font-mono text-xs text-muted-foreground">
@@ -66,7 +80,11 @@ export default function ApiKeysPage() {
                     </span>
                   </div>
                   {!revoked && (
-                    <Button variant="ghost" size="icon-sm" onClick={() => remove(apiKey.id)}>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => remove(apiKey.id)}
+                    >
                       <Trash2Icon />
                     </Button>
                   )}

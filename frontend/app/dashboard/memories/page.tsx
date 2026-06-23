@@ -1,13 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { IngestPanel } from "@/components/memories/ingest-panel";
 import { MemoryGraph } from "@/components/memories/memory-graph";
+import { ProvenancePanel } from "@/components/memories/provenance-panel";
 import { RecallPanel } from "@/components/memories/recall-panel";
+import { useActivity } from "@/lib/hooks/use-observability";
+import { useAgents } from "@/lib/hooks/use-agents";
 import { useMemoryGraph } from "@/lib/hooks/use-memory-graph";
+import type { Entity } from "@/lib/api";
 
 export default function MemoriesPage() {
   const {
@@ -25,6 +31,18 @@ export default function MemoriesPage() {
     clearRecall,
     reloadGraph,
   } = useMemoryGraph();
+
+  const { agents } = useAgents();
+  const agentNames = useMemo(() => agents.map((agent) => agent.name), [agents]);
+  const { activity, loading: activityLoading } = useActivity();
+
+  // The entity whose provenance panel is open (looked up from the graph click).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedEntity: Entity | null = useMemo(
+    () =>
+      selectedId ? (entities.find((e) => e.id === selectedId) ?? null) : null,
+    [selectedId, entities],
+  );
 
   const highlightedIds = recallResult
     ? new Set(recallResult.entities.map((entity) => entity.id))
@@ -103,9 +121,17 @@ export default function MemoriesPage() {
               </Button>
             </div>
           ) : loadingGraph ? (
-            <div className="flex h-[520px] items-center justify-center gap-2 rounded-xl border border-border bg-card text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Loading graph...
+            <div className="h-[520px] w-full overflow-hidden rounded-xl border border-border bg-card">
+              <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-5 w-20 rounded-full" />
+                ))}
+              </div>
+              <div className="grid h-[470px] grid-cols-3 gap-4 p-6">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full rounded-lg" />
+                ))}
+              </div>
             </div>
           ) : entities.length === 0 ? (
             <div className="flex h-[520px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card text-center">
@@ -116,11 +142,18 @@ export default function MemoriesPage() {
               </p>
             </div>
           ) : (
-            <MemoryGraph
-              entities={entities}
-              relations={relations}
-              highlightedIds={highlightedIds}
-            />
+            <>
+              <MemoryGraph
+                entities={entities}
+                relations={relations}
+                highlightedIds={highlightedIds}
+                onSelectEntity={setSelectedId}
+              />
+              <p className="text-xs text-muted-foreground">
+                Tip: click any node to see its full provenance — who asserted
+                each property and when.
+              </p>
+            </>
           )}
         </div>
 
@@ -129,6 +162,7 @@ export default function MemoriesPage() {
             onIngest={ingest}
             ingesting={ingesting}
             error={ingestError}
+            agents={agentNames}
           />
           <RecallPanel
             onRecall={runRecall}
@@ -139,6 +173,30 @@ export default function MemoriesPage() {
           />
         </div>
       </div>
+
+      {/* Write activity, full-width below the graph — a chronological feed of
+          agent writes into this project. Grows with its content; the page (not
+          a cramped inner box) scrolls. */}
+      <section className="rounded-xl bg-card p-6 ring-1 ring-foreground/10">
+        <div className="mb-4">
+          <h2 className="font-heading text-base font-semibold tracking-tight">
+            Write activity
+          </h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Chronological feed of agent writes into this project — who wrote
+            what, and what was extracted.
+          </p>
+        </div>
+        <ActivityFeed
+          items={activity}
+          loading={activityLoading && activity.length === 0}
+        />
+      </section>
+
+      <ProvenancePanel
+        entity={selectedEntity}
+        onClose={() => setSelectedId(null)}
+      />
     </div>
   );
 }

@@ -9,14 +9,22 @@ export async function POST(request: NextRequest) {
   // traversal_depth/retrieval_mode are forwarded only when the caller pins
   // them; left unset, the backend's query classifier chooses routing (and the
   // returned stats report the real query_class / depth_reached rather than
-  // "manual"). synthesise is forwarded when requested.
+  // "manual").
+  //
+  // synthesise defaults to TRUE here: this route handler is only ever called by
+  // the (human-facing) dashboard, where a natural-language answer is the point.
+  // The FastAPI default stays false, so MCP/direct API callers are unaffected --
+  // they hit /v1/recall directly and opt in explicitly. A caller can still pass
+  // synthesise:false to override.
   const payload: Record<string, unknown> = {
     query: body.query,
     limit: body.limit ?? 10,
+    synthesise: body.synthesise ?? true,
   };
-  if (body.traversal_depth !== undefined) payload.traversal_depth = body.traversal_depth;
-  if (body.retrieval_mode !== undefined) payload.retrieval_mode = body.retrieval_mode;
-  if (body.synthesise !== undefined) payload.synthesise = body.synthesise;
+  if (body.traversal_depth !== undefined)
+    payload.traversal_depth = body.traversal_depth;
+  if (body.retrieval_mode !== undefined)
+    payload.retrieval_mode = body.retrieval_mode;
 
   const upstream = await forwardToFastapi("/v1/recall", {
     method: "POST",

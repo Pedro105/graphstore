@@ -44,6 +44,13 @@
   --color-section-warm: var(--section-warm);
   --color-palette-accent: var(--palette-accent);
   --color-palette-accent-warm: var(--palette-accent-warm);
+  /* Dashboard data accent: a saturated, brand-aligned warm amber used for the
+     primary data series, key metrics, "recently written" highlights, and other
+     points the eye should land on first. Distinct from --accent (the muted warm
+     beige used for passive surfaces like the active nav background). */
+  --color-data-accent: var(--data-accent);
+  --color-data-accent-foreground: var(--data-accent-foreground);
+  --color-data-accent-soft: var(--data-accent-soft);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -59,6 +66,12 @@
   --palette-soft: #efe9e3;
   --palette-accent: #d9cfc7;
   --palette-accent-warm: #c9b59c;
+
+  /* Saturated data accent (see @theme inline note). Defined at :root so the
+     value exists everywhere, then consumed mainly inside .dashboard-theme. */
+  --data-accent: #b45309;
+  --data-accent-foreground: #ffffff;
+  --data-accent-soft: #fdf6ee;
 
   --background: var(--palette-light);
   --foreground: #1a1a1a;
@@ -124,7 +137,10 @@
   --sidebar-border: #ebe6e1;
   --sidebar-ring: var(--palette-accent-warm);
 
-  font-family: var(--font-sans);
+  /* Inter is the dashboard's default typeface (the "Google Sans" stand-in).
+     Scoped here so it covers the whole dashboard subtree without affecting the
+     landing pages, which stay on --font-sans (Quicksand). */
+  font-family: var(--font-inter);
 }
 
 .dashboard-theme h1,
@@ -134,7 +150,7 @@
 .dashboard-theme h5,
 .dashboard-theme h6,
 .dashboard-theme [data-slot="card-title"] {
-  font-family: var(--font-sans);
+  font-family: var(--font-inter);
   letter-spacing: -0.015em;
 }
 

@@ -8,8 +8,9 @@ via `extra_scope`, which are used for in-tenant filtering downstream
 (Scope.includes); any `tenant_id` smuggled into `extra_scope` is dropped.
 """
 
+import asyncio
 import re
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from contextstore.api.ratelimit import require_memories_quota, require_recall_qu
 from contextstore.core.service import recall as recall_service
 from contextstore.core.service import remember as remember_service
 from contextstore.db import postgres
+from contextstore.models.claim import Claim
 from contextstore.models.entity import Entity
 from contextstore.models.memory import Memory
 from contextstore.models.recall import RecallResult, RetrievalMode
@@ -217,6 +219,301 @@ async def get_graph(
         relation.id: relation for _, relations in traversal_results for relation in relations
     }
     return GraphSnapshot(entities=entities, relations=list(relations_by_id.values()))
+
+
+# --- Observability: tenant-scoped analytics, activity feed & per-agent sources
+#
+# These three read endpoints surface, for the *caller's own tenant*, the data
+# the engine already records in Postgres (usage_log, memory_writes). They mirror
+# the operator admin analytics (api/admin_routes.py) but are scoped to one
+# tenant via the API key rather than spanning all of them, so the dashboard can
+# show write/recall trends, latency, and which agent wrote what -- without the
+# admin token. No new tables or graph plumbing: same postgres aggregates, with a
+# tenant filter applied.
+
+
+class WritePoint(BaseModel):
+    day: date
+    count: int
+
+
+class TokenPoint(BaseModel):
+    day: date
+    tokens: int
+
+
+class LatencyPoint(BaseModel):
+    day: date
+    count: int
+    p50: int | None
+    p95: int | None
+
+
+class ClassCount(BaseModel):
+    query_class: str
+    count: int
+
+
+class AnalyticsResponse(BaseModel):
+    """The caller tenant's write/token/latency time series plus its recall
+    query-class mix -- everything the Overview charts need in one round trip."""
+
+    writes_over_time: list[WritePoint]
+    tokens_over_time: list[TokenPoint]
+    recall_latency: list[LatencyPoint]
+    query_class_breakdown: list[ClassCount]
+
+
+@router.get("/analytics", response_model=AnalyticsResponse)
+async def get_analytics(
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+    days: int = Query(default=30, ge=1, le=365),
+    class_days: int = Query(default=7, ge=1, le=365),
+) -> AnalyticsResponse:
+    """Time-series analytics for the authenticated tenant: daily writes, token
+    spend, and recall latency p50/p95 over `days`, plus the recall query-class
+    breakdown over the last `class_days`. tenant_id comes from the API key."""
+    tenant_id = auth.tenant_id
+    writes, tokens, latency, classes = await asyncio.gather(
+        postgres.writes_over_time(db, days, tenant_id),
+        postgres.tokens_over_time(db, days, tenant_id),
+        postgres.recall_latency_over_time(db, days, tenant_id),
+        postgres.query_class_breakdown(db, class_days, tenant_id),
+    )
+    return AnalyticsResponse(
+        writes_over_time=[WritePoint(**r) for r in writes],
+        tokens_over_time=[TokenPoint(**r) for r in tokens],
+        recall_latency=[LatencyPoint(**r) for r in latency],
+        query_class_breakdown=[ClassCount(**r) for r in classes],
+    )
+
+
+class ActivityItem(BaseModel):
+    """One recent write into the tenant's graph, from the memory_writes audit
+    log: which source (agent) wrote, the submitted content, and how many
+    entities/relations extraction pulled out of it."""
+
+    id: UUID
+    source: str
+    raw_content: str
+    extracted_entity_count: int
+    extracted_relation_count: int
+    created_at: datetime
+
+
+@router.get("/activity", response_model=list[ActivityItem])
+async def list_activity(
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[ActivityItem]:
+    """Recent writes into the authenticated tenant's graph, newest first -- the
+    'who wrote what, when' activity feed. Reads the memory_writes audit log
+    scoped to the caller's tenant."""
+    rows = await postgres.list_memory_writes(db, auth.tenant_id, limit)
+    return [ActivityItem(**row) for row in rows]
+
+
+class SourceActivity(BaseModel):
+    """Per-source (per-agent) write breakdown for the tenant: how many writes,
+    total entities/relations contributed, and when it last wrote."""
+
+    source: str
+    write_count: int
+    entities: int
+    relations: int
+    last_activity_at: datetime
+
+
+@router.get("/sources", response_model=list[SourceActivity])
+async def list_sources(
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> list[SourceActivity]:
+    """Per-agent contribution for the authenticated tenant, busiest first: which
+    sources wrote, how much each, and when each last wrote. The multi-agent
+    coordination view, scoped to the caller's own project."""
+    rows = await postgres.project_sources(db, auth.tenant_id)
+    return [SourceActivity(**row) for row in rows]
+
+
+# --- Provenance: full claim history for one of the caller's own entities ------
+#
+# The same inspection the operator admin API offers cross-tenant
+# (api/admin_routes.py's get_entity_claims), but scoped to the caller's own
+# tenant via the API key rather than addressing an arbitrary tenant by path. A
+# user is entitled to see who asserted what in *their own* graph, so this needs
+# no admin token. Reuses graph_store.get_entity + the claim history already
+# persisted on the node -- no new graph plumbing.
+
+
+class AnnotatedClaim(BaseModel):
+    """One claim from an entity's history, with a `superseded` flag derived from
+    whether any later claim's provenance lists this claim's id in `supersedes`."""
+
+    claim: Claim
+    superseded: bool
+
+
+class EntityClaimsResponse(BaseModel):
+    entity_id: UUID
+    entity_name: str
+    entity_type: str
+    # Every claim ever made about the entity, oldest first, each flagged active
+    # or superseded -- the ground-truth provenance view, not just the active value.
+    claims: list[AnnotatedClaim] = Field(default_factory=list)
+
+
+def _superseded_claim_ids(claims: list[Claim]) -> set[UUID]:
+    """Ids of claims marked superseded by some other claim's provenance."""
+    return {UUID(claim_id) for claim in claims for claim_id in (claim.provenance.supersedes or [])}
+
+
+@router.get("/entities/{entity_id}/claims", response_model=EntityClaimsResponse)
+async def get_entity_claims(
+    entity_id: UUID,
+    graph_store: GraphStoreDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> EntityClaimsResponse:
+    """Full claim history for one entity in the authenticated tenant's graph:
+    every claim ever made, which source asserted it, when, and which claims were
+    superseded -- oldest first. The entity is looked up in the caller's own graph
+    (tenant from the API key), so an entity id from another tenant is a 404, same
+    as a nonexistent one."""
+    entity = await graph_store.get_entity(entity_id, auth.tenant_id)
+    if entity is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entity not found in your graph.",
+        )
+    superseded = _superseded_claim_ids(entity.claims)
+    ordered = sorted(entity.claims, key=lambda claim: claim.provenance.created_at)
+    return EntityClaimsResponse(
+        entity_id=entity.id,
+        entity_name=entity.name,
+        entity_type=entity.entity_type,
+        claims=[
+            AnnotatedClaim(claim=claim, superseded=claim.id in superseded) for claim in ordered
+        ],
+    )
+
+
+# --- Usage monitoring: the caller tenant's current-month consumption ----------
+#
+# Everything the /dashboard/usage page needs in one round trip, scoped to the
+# authenticated tenant. Reuses the same usage_log / memory_writes the rest of
+# the observability surface reads -- no new tables.
+
+# Placeholder token price for cost ESTIMATION only. Set to Anthropic's listed
+# Claude Haiku input rate ($0.80 / million tokens) as a stand-in; usage_log
+# records total tokens (not split input/output), so this is deliberately an
+# estimate, surfaced as such in the UI. Update here when real pricing is wired.
+_HAIKU_USD_PER_MTOK = 0.80
+
+
+class UsageDayPoint(BaseModel):
+    date: date
+    recalls: int
+    writes: int
+    tokens: int
+
+
+class EndpointUsage(BaseModel):
+    calls: int
+    tokens: int
+
+
+class AgentUsage(BaseModel):
+    source: str
+    writes: int
+    last_active: datetime
+
+
+class UsageResponse(BaseModel):
+    """Current-month usage for the authenticated tenant, plus a 30-day daily
+    series and per-endpoint / per-agent breakdowns. `estimated_cost_usd` is an
+    estimate from a placeholder token rate (see _HAIKU_USD_PER_MTOK)."""
+
+    period: str  # "YYYY-MM" (UTC) of the totals below
+    total_recalls: int
+    total_writes: int
+    tokens_used: int
+    estimated_cost_usd: float
+    by_day: list[UsageDayPoint]
+    by_endpoint: dict[str, EndpointUsage]
+    by_agent: list[AgentUsage]
+
+
+@router.get("/usage", response_model=UsageResponse)
+async def get_usage(
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+    days: int = Query(default=30, ge=1, le=90),
+) -> UsageResponse:
+    """Usage for the authenticated tenant: current-month recall/write/token
+    totals with an estimated cost, a daily recalls/writes/tokens series over the
+    last `days` days, and per-endpoint and per-agent breakdowns. Strictly scoped
+    to the caller's tenant (from the API key). NULL token rows count as 0."""
+    tenant_id = auth.tenant_id
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    writes, totals, endpoints, log_days, write_days, sources = await asyncio.gather(
+        postgres.writes_since(db, tenant_id, month_start),
+        postgres.usage_totals_since(db, tenant_id, month_start),
+        postgres.usage_by_endpoint_since(db, tenant_id, month_start),
+        postgres.usage_log_by_day(db, tenant_id, days),
+        postgres.writes_over_time(db, days, tenant_id),
+        postgres.project_sources(db, tenant_id),
+    )
+
+    # Both core endpoints are always present (zero when unused) so the cost table
+    # has stable rows; a real zero, not invented data.
+    by_endpoint: dict[str, EndpointUsage] = {
+        "/v1/memories": EndpointUsage(calls=0, tokens=0),
+        "/v1/recall": EndpointUsage(calls=0, tokens=0),
+    }
+    for row in endpoints:
+        by_endpoint[row["endpoint"]] = EndpointUsage(calls=row["calls"], tokens=row["tokens"])
+
+    # Merge recalls/tokens (usage_log) with writes (memory_writes) by day. Only
+    # days with real activity appear -- no zero-filled phantom points.
+    days_map: dict[date, UsageDayPoint] = {}
+    for row in log_days:
+        days_map[row["day"]] = UsageDayPoint(
+            date=row["day"], recalls=row["recalls"], writes=0, tokens=row["tokens"]
+        )
+    for row in write_days:
+        existing = days_map.get(row["day"])
+        if existing is not None:
+            existing.writes = row["count"]
+        else:
+            days_map[row["day"]] = UsageDayPoint(
+                date=row["day"], recalls=0, writes=row["count"], tokens=0
+            )
+    by_day = [days_map[day] for day in sorted(days_map)]
+
+    tokens_used = totals["tokens"]
+    estimated_cost = round(tokens_used / 1_000_000 * _HAIKU_USD_PER_MTOK, 6)
+
+    by_agent = [
+        AgentUsage(
+            source=row["source"], writes=row["write_count"], last_active=row["last_activity_at"]
+        )
+        for row in sources
+    ]
+
+    return UsageResponse(
+        period=now.strftime("%Y-%m"),
+        total_recalls=totals["recalls"],
+        total_writes=writes,
+        tokens_used=tokens_used,
+        estimated_cost_usd=estimated_cost,
+        by_day=by_day,
+        by_endpoint=by_endpoint,
+        by_agent=by_agent,
+    )
 
 
 # --- Key management: creation is operator-only (admin token); listing and

@@ -16,6 +16,7 @@ The pool, key generation, and hashing are otherwise independent of that choice.
 
 import secrets
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, TypeAlias
 from uuid import UUID
 
@@ -445,59 +446,86 @@ async def list_usage(
     return [dict(row) for row in rows]
 
 
-# --- Operator admin: time-series & breakdown analytics ----------------------
+# --- Time-series & breakdown analytics ---------------------------------------
 #
 # All grouped by day in UTC via date_trunc; the "last N days" window uses
 # make_interval so the period is a bound parameter, not string-built SQL.
+#
+# Each takes an optional `tenant_id`: None means cross-tenant (the operator
+# admin overview), a value scopes the aggregate to one project (the user-facing
+# dashboard). The tenant filter is an extra bound parameter, never string-built,
+# so both call sites share one query shape with no SQL injection surface.
 
 
-async def writes_over_time(pool: Pool, days: int = 30) -> list[dict[str, Any]]:
-    """Daily count of memory writes over the last `days` days (newest last)."""
+async def writes_over_time(
+    pool: Pool, days: int = 30, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Daily count of memory writes over the last `days` days (newest last).
+    Scoped to `tenant_id` when given, else across all tenants."""
     rows = await pool.fetch(
         "SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS count "
-        "FROM memory_writes WHERE created_at >= NOW() - make_interval(days => $1) "
+        "FROM memory_writes "
+        "WHERE created_at >= NOW() - make_interval(days => $1) "
+        "AND ($2::text IS NULL OR tenant_id = $2) "
         "GROUP BY day ORDER BY day",
         days,
+        tenant_id,
     )
     return [dict(row) for row in rows]
 
 
-async def tokens_over_time(pool: Pool, days: int = 30) -> list[dict[str, Any]]:
-    """Daily sum of tokens_used (LLM spend) over the last `days` days."""
+async def tokens_over_time(
+    pool: Pool, days: int = 30, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Daily sum of tokens_used (LLM spend) over the last `days` days.
+    Scoped to `tenant_id` when given, else across all tenants."""
     rows = await pool.fetch(
         "SELECT date_trunc('day', created_at)::date AS day, "
         "COALESCE(SUM(tokens_used), 0)::bigint AS tokens "
-        "FROM usage_log WHERE created_at >= NOW() - make_interval(days => $1) "
+        "FROM usage_log "
+        "WHERE created_at >= NOW() - make_interval(days => $1) "
+        "AND ($2::text IS NULL OR tenant_id = $2) "
         "GROUP BY day ORDER BY day",
         days,
+        tenant_id,
     )
     return [dict(row) for row in rows]
 
 
-async def recall_latency_over_time(pool: Pool, days: int = 30) -> list[dict[str, Any]]:
+async def recall_latency_over_time(
+    pool: Pool, days: int = 30, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
     """Daily recall latency p50/p95 (and count) over the last `days` days.
 
     Only rows with a latency_ms (i.e. /v1/recall) participate; percentiles use
-    Postgres percentile_cont over the day's latencies."""
+    Postgres percentile_cont over the day's latencies. Scoped to `tenant_id`
+    when given, else across all tenants."""
     rows = await pool.fetch(
         "SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS count, "
         "percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50, "
         "percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95 "
         "FROM usage_log "
         "WHERE latency_ms IS NOT NULL AND created_at >= NOW() - make_interval(days => $1) "
+        "AND ($2::text IS NULL OR tenant_id = $2) "
         "GROUP BY day ORDER BY day",
         days,
+        tenant_id,
     )
     return [dict(row) for row in rows]
 
 
-async def query_class_breakdown(pool: Pool, days: int = 7) -> list[dict[str, Any]]:
-    """Count of recalls per query_class over the last `days` days, busiest first."""
+async def query_class_breakdown(
+    pool: Pool, days: int = 7, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Count of recalls per query_class over the last `days` days, busiest first.
+    Scoped to `tenant_id` when given, else across all tenants."""
     rows = await pool.fetch(
         "SELECT query_class, COUNT(*) AS count FROM usage_log "
         "WHERE query_class IS NOT NULL AND created_at >= NOW() - make_interval(days => $1) "
+        "AND ($2::text IS NULL OR tenant_id = $2) "
         "GROUP BY query_class ORDER BY count DESC",
         days,
+        tenant_id,
     )
     return [dict(row) for row in rows]
 
@@ -533,6 +561,68 @@ async def project_sources(pool: Pool, tenant_id: str) -> list[dict[str, Any]]:
         "FROM memory_writes WHERE tenant_id = $1 "
         "GROUP BY source ORDER BY write_count DESC",
         tenant_id,
+    )
+    return [dict(row) for row in rows]
+
+
+# --- User-facing usage monitoring (tenant-scoped, current-billing-period) -----
+#
+# All scoped to one tenant_id. tokens_used is nullable on usage_log (writes made
+# before token capture, or rows where no LLM call happened), so every SUM uses
+# COALESCE(..., 0) -- a NULL contributes 0, never an error or a NULL total.
+
+
+async def writes_since(pool: Pool, tenant_id: str, since: datetime) -> int:
+    """Count of memory writes for a tenant since `since` (inclusive)."""
+    row = await pool.fetchrow(
+        "SELECT COUNT(*) AS n FROM memory_writes WHERE tenant_id = $1 AND created_at >= $2",
+        tenant_id,
+        since,
+    )
+    assert row is not None
+    return int(row["n"])
+
+
+async def usage_totals_since(pool: Pool, tenant_id: str, since: datetime) -> dict[str, int]:
+    """Recall count and total tokens for a tenant since `since`. NULL tokens
+    count as 0 (COALESCE), so a tenant with un-tokened rows still totals cleanly."""
+    row = await pool.fetchrow(
+        "SELECT COUNT(*) FILTER (WHERE endpoint = '/v1/recall') AS recalls, "
+        "COALESCE(SUM(tokens_used), 0)::bigint AS tokens "
+        "FROM usage_log WHERE tenant_id = $1 AND created_at >= $2",
+        tenant_id,
+        since,
+    )
+    assert row is not None
+    return {"recalls": int(row["recalls"]), "tokens": int(row["tokens"])}
+
+
+async def usage_by_endpoint_since(
+    pool: Pool, tenant_id: str, since: datetime
+) -> list[dict[str, Any]]:
+    """Per-endpoint call count and token sum for a tenant since `since`."""
+    rows = await pool.fetch(
+        "SELECT endpoint, COUNT(*) AS calls, COALESCE(SUM(tokens_used), 0)::bigint AS tokens "
+        "FROM usage_log WHERE tenant_id = $1 AND created_at >= $2 "
+        "GROUP BY endpoint",
+        tenant_id,
+        since,
+    )
+    return [dict(row) for row in rows]
+
+
+async def usage_log_by_day(pool: Pool, tenant_id: str, days: int = 30) -> list[dict[str, Any]]:
+    """Daily recall count and token sum for a tenant over the last `days` days.
+    (Writes-per-day come from writes_over_time; the route merges the two.)"""
+    rows = await pool.fetch(
+        "SELECT date_trunc('day', created_at)::date AS day, "
+        "COUNT(*) FILTER (WHERE endpoint = '/v1/recall') AS recalls, "
+        "COALESCE(SUM(tokens_used), 0)::bigint AS tokens "
+        "FROM usage_log WHERE tenant_id = $1 "
+        "AND created_at >= NOW() - make_interval(days => $2) "
+        "GROUP BY day ORDER BY day",
+        tenant_id,
+        days,
     )
     return [dict(row) for row in rows]
 
