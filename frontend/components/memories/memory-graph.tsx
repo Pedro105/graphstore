@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
   ReactFlow,
   ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
   type Edge,
   type Node,
 } from "@xyflow/react";
@@ -62,7 +64,7 @@ export function MemoryGraph({
     return ids;
   }, [entities]);
 
-  const { nodes, edges } = useMemo(() => {
+  const { nodes: computedNodes, edges: computedEdges } = useMemo(() => {
     const positions = layoutGraph(
       entities.map((entity) => ({ id: entity.id })),
       relations.map((relation) => ({
@@ -127,6 +129,34 @@ export function MemoryGraph({
     recentIds,
     colorMap,
   ]);
+
+  // React Flow needs to own node/edge state for nodes to be draggable: a fully
+  // controlled `nodes` prop with no onNodesChange handler can't apply drag
+  // position updates, so nodes appear fixed. We mirror the derived graph into
+  // state and feed onNodesChange/onEdgesChange below.
+  const [nodes, setNodes, onNodesChange] = useNodesState<EntityNodeType>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Sync the derived graph into state whenever inputs change, but preserve any
+  // position the user has dragged a node to: an existing node keeps its current
+  // position, only new nodes take the computed layout position. Node `data`
+  // (highlight/dim/recent/color) is always refreshed so recall and filter
+  // changes still reflect visually without snapping dragged nodes back.
+  useEffect(() => {
+    setNodes((previous) => {
+      const positionsById = new Map(
+        previous.map((node) => [node.id, node.position]),
+      );
+      return computedNodes.map((node) => ({
+        ...node,
+        position: positionsById.get(node.id) ?? node.position,
+      }));
+    });
+  }, [computedNodes, setNodes]);
+
+  useEffect(() => {
+    setEdges(computedEdges);
+  }, [computedEdges, setEdges]);
 
   function toggleType(type: string) {
     setSelectedTypes((prev) => {
@@ -207,7 +237,10 @@ export function MemoryGraph({
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
+            nodesDraggable
             fitView
             onNodeClick={handleNodeClick}
             proOptions={{ hideAttribution: true }}

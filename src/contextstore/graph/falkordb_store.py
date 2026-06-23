@@ -455,17 +455,19 @@ class FalkorDBGraphStore(GraphStore):
             entities = (_node_to_entity(row[0].properties) for row in result.result_set)
             return [entity for entity in entities if scope.includes(entity.scope)]
 
-        async def fetch_neighbours(
-            frontier_ids: list[str], visited_ids: list[str]
-        ) -> list[tuple[Entity, Relation]]:
+        async def fetch_neighbours(frontier_ids: list[str]) -> list[tuple[Entity, Relation]]:
             # Undirected: matches the one-hop `traverse` convention so a fact
             # is reachable from either endpoint. One query for the whole
-            # frontier, not one per node.
+            # frontier, not one per node. All edges incident to the frontier
+            # are returned -- including edges to already-visited neighbours --
+            # so edges *between* already-discovered entities (notably the
+            # seeds) are captured rather than dropped. The BFS dedups and
+            # decides re-expansion (see retrieval/traversal.py).
             result = await graph.query(
                 "MATCH (e:Entity)-[r]-(neighbour:Entity) "
-                "WHERE e.id IN $frontier_ids AND NOT neighbour.id IN $visited_ids "
+                "WHERE e.id IN $frontier_ids "
                 "RETURN neighbour, r",
-                {"frontier_ids": frontier_ids, "visited_ids": visited_ids},
+                {"frontier_ids": frontier_ids},
             )
             pairs: list[tuple[Entity, Relation]] = []
             for neighbour_node, edge in result.result_set:

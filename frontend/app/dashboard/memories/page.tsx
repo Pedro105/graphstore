@@ -105,73 +105,75 @@ export default function MemoriesPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
-        <div className="flex flex-col gap-3">
-          {graphError ? (
-            <div className="flex h-[520px] flex-col items-center justify-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 text-center">
-              <p className="max-w-sm text-sm text-destructive">
-                Couldn&apos;t reach the backend: {graphError}
-              </p>
-              <p className="max-w-sm text-xs text-muted-foreground">
-                Make sure FalkorDB and the FastAPI server are running (see
-                README run steps).
-              </p>
-              <Button size="sm" variant="outline" onClick={() => reloadGraph()}>
-                Retry
-              </Button>
+      {/* Graph, full width across the page — the canvas is the focus; the
+          Remember/Recall panels sit below it (side by side on wide screens). */}
+      <div className="flex flex-col gap-3">
+        {graphError ? (
+          <div className="flex h-[520px] flex-col items-center justify-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 text-center">
+            <p className="max-w-sm text-sm text-destructive">
+              Couldn&apos;t reach the backend: {graphError}
+            </p>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              Make sure FalkorDB and the FastAPI server are running (see README
+              run steps).
+            </p>
+            <Button size="sm" variant="outline" onClick={() => reloadGraph()}>
+              Retry
+            </Button>
+          </div>
+        ) : loadingGraph ? (
+          <div className="h-[520px] w-full overflow-hidden rounded-xl border border-border bg-card">
+            <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-5 w-20 rounded-full" />
+              ))}
             </div>
-          ) : loadingGraph ? (
-            <div className="h-[520px] w-full overflow-hidden rounded-xl border border-border bg-card">
-              <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-5 w-20 rounded-full" />
-                ))}
-              </div>
-              <div className="grid h-[470px] grid-cols-3 gap-4 p-6">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-16 w-full rounded-lg" />
-                ))}
-              </div>
+            <div className="grid h-[470px] grid-cols-3 gap-4 p-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-16 w-full rounded-lg" />
+              ))}
             </div>
-          ) : entities.length === 0 ? (
-            <div className="flex h-[520px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card text-center">
-              <p className="font-medium">No memories yet</p>
-              <p className="max-w-sm text-sm text-muted-foreground">
-                Use the panel on the right to remember something -- entities and
-                relations will appear here as the graph grows.
-              </p>
-            </div>
-          ) : (
-            <>
-              <MemoryGraph
-                entities={entities}
-                relations={relations}
-                highlightedIds={highlightedIds}
-                onSelectEntity={setSelectedId}
-              />
-              <p className="text-xs text-muted-foreground">
-                Tip: click any node to see its full provenance — who asserted
-                each property and when.
-              </p>
-            </>
-          )}
-        </div>
+          </div>
+        ) : entities.length === 0 ? (
+          <div className="flex h-[520px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card text-center">
+            <p className="font-medium">No memories yet</p>
+            <p className="max-w-sm text-sm text-muted-foreground">
+              Use the Remember panel below to write something -- entities and
+              relations will appear here as the graph grows.
+            </p>
+          </div>
+        ) : (
+          <>
+            <MemoryGraph
+              entities={entities}
+              relations={relations}
+              highlightedIds={highlightedIds}
+              onSelectEntity={setSelectedId}
+            />
+            <p className="text-xs text-muted-foreground">
+              Tip: click any node to see its full provenance — who asserted each
+              property and when.
+            </p>
+          </>
+        )}
+      </div>
 
-        <div className="flex flex-col gap-4">
-          <IngestPanel
-            onIngest={ingest}
-            ingesting={ingesting}
-            error={ingestError}
-            agents={agentNames}
-          />
-          <RecallPanel
-            onRecall={runRecall}
-            onClear={clearRecall}
-            recalling={recalling}
-            error={recallError}
-            result={recallResult}
-          />
-        </div>
+      {/* Remember + Recall, below the graph: side by side on wide screens,
+            stacked when narrow. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <IngestPanel
+          onIngest={ingest}
+          ingesting={ingesting}
+          error={ingestError}
+          agents={agentNames}
+        />
+        <RecallPanel
+          onRecall={runRecall}
+          onClear={clearRecall}
+          recalling={recalling}
+          error={recallError}
+          result={recallResult}
+        />
       </div>
 
       {/* Write activity, full-width below the graph — a chronological feed of
