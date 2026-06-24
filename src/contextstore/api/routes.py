@@ -399,6 +399,31 @@ async def get_entity_claims(
     )
 
 
+@router.delete("/entities/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_entity(
+    entity_id: UUID,
+    graph_store: GraphStoreDep,
+    db: DbDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> None:
+    """Hard-delete one entity (and its incident relations) from the authenticated
+    tenant's graph. Authorization is tenant-scoping only (the current model): any
+    valid key may delete anything in its own tenant -- there is no inter-agent
+    permission layer yet. The entity is addressed in the caller's own graph
+    (tenant from the API key), so an id from another tenant is a 404, same as a
+    nonexistent one. Irreversible: this removes the node and its edges outright
+    (no supersession/history retained -- that's the separate soft-retract path)."""
+    deleted = await graph_store.delete_entity(entity_id, auth.tenant_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entity not found in your graph.",
+        )
+    # Best-effort usage record, consistent with the other authenticated endpoints;
+    # never fails the delete.
+    await postgres.log_usage(db, auth.api_key_id, auth.tenant_id, "/v1/entities")
+
+
 # --- Usage monitoring: the caller tenant's current-month consumption ----------
 #
 # Everything the /dashboard/usage page needs in one round trip, scoped to the

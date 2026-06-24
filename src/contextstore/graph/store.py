@@ -122,6 +122,18 @@ class GraphStore(ABC):
         """Delete everything written by a given memory. Returns True if anything was deleted."""
 
     @abstractmethod
+    async def delete_entity(self, entity_id: UUID, tenant_id: str) -> bool:
+        """Hard-delete a single entity (and its incident relations) by id.
+
+        Addresses a tenant directly by id (like `get_entity`/`delete_memory`),
+        since it targets one known node. DETACH-deletes the node so its edges
+        go with it. Returns True if a node was deleted, False if no entity with
+        that id exists in the tenant's graph (the caller turns that into a 404).
+        Tenant-scoped by construction: an id belonging to another tenant isn't
+        in this tenant's graph, so it deletes nothing and returns False.
+        """
+
+    @abstractmethod
     async def graph_stats(self, tenant_id: str) -> tuple[int, int]:
         """Return (entity_count, relation_count) for a tenant's graph.
 

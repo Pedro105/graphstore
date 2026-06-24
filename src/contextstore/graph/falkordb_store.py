@@ -495,6 +495,13 @@ class FalkorDBGraphStore(GraphStore):
         )
         return bool(result.nodes_deleted > 0)
 
+    async def delete_entity(self, entity_id: UUID, tenant_id: str) -> bool:
+        graph = self._graph_for(tenant_id)
+        result = await graph.query(
+            "MATCH (n:Entity {id: $id}) DETACH DELETE n", {"id": str(entity_id)}
+        )
+        return bool(result.nodes_deleted > 0)
+
     async def graph_stats(self, tenant_id: str) -> tuple[int, int]:
         graph = self._graph_for(tenant_id)
         try:
