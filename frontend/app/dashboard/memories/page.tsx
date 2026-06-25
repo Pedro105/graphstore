@@ -48,6 +48,13 @@ export default function MemoriesPage() {
     ? new Set(recallResult.entities.map((entity) => entity.id))
     : null;
 
+  // Disputed facts: claims from different agents that conflict and remain
+  // unresolved. Surfaced as a first-class stat — the coherence wedge made visible.
+  const disputedCount = useMemo(
+    () => relations.filter((relation) => relation.status === "disputed").length,
+    [relations],
+  );
+
   // Project-level "last updated" = the most recent provenance timestamp across
   // the graph (distinct from the per-recall stats popover, which is query-level).
   const lastUpdated = useMemo(() => {
@@ -81,10 +88,15 @@ export default function MemoriesPage() {
       </div>
 
       {showStats ? (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[
             { label: "Entities", value: entities.length.toLocaleString() },
             { label: "Relations", value: relations.length.toLocaleString() },
+            {
+              label: "Disputed",
+              value: disputedCount.toLocaleString(),
+              emphasize: disputedCount > 0,
+            },
             {
               label: "Last updated",
               value: lastUpdated ? new Date(lastUpdated).toLocaleString() : "—",
@@ -92,12 +104,28 @@ export default function MemoriesPage() {
           ].map((stat) => (
             <div
               key={stat.label}
-              className="rounded-xl border border-border bg-card p-3"
+              className={
+                stat.emphasize
+                  ? "rounded-xl border border-destructive/50 bg-destructive/5 p-3"
+                  : "rounded-xl border border-border bg-card p-3"
+              }
             >
-              <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              <div
+                className={
+                  stat.emphasize
+                    ? "text-xs font-medium tracking-wide text-destructive uppercase"
+                    : "text-xs font-medium tracking-wide text-muted-foreground uppercase"
+                }
+              >
                 {stat.label}
               </div>
-              <div className="mt-0.5 truncate text-lg font-semibold tabular-nums">
+              <div
+                className={
+                  stat.emphasize
+                    ? "mt-0.5 truncate text-lg font-semibold tabular-nums text-destructive"
+                    : "mt-0.5 truncate text-lg font-semibold tabular-nums"
+                }
+              >
                 {stat.value}
               </div>
             </div>

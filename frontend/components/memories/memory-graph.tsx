@@ -29,6 +29,10 @@ const nodeTypes = { entity: EntityNode };
 // isolated via the Recent toggle.
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+// Disputed facts (claims from different agents that conflict, unresolved) are
+// drawn in red and dashed so contention is visible at a glance.
+const DISPUTE_COLOR = "#ef4444";
+
 interface MemoryGraphProps {
   entities: Entity[];
   relations: Relation[];
@@ -109,18 +113,30 @@ export function MemoryGraph({
         recallActive &&
         highlightedIds.has(relation.source_entity_id) &&
         highlightedIds.has(relation.target_entity_id);
+      const disputed = relation.status === "disputed";
+      const disputedStyle = disputed
+        ? { stroke: DISPUTE_COLOR, strokeWidth: 2, strokeDasharray: "6 4" }
+        : undefined;
       return {
         id: relation.id,
         source: relation.source_entity_id,
         target: relation.target_entity_id,
-        label: relation.relation_type,
-        animated: recallRelevant,
+        // Mark disputed edges so contention reads from the label alone.
+        label: disputed ? `⚠ ${relation.relation_type}` : relation.relation_type,
+        animated: recallRelevant || disputed,
         // Edges are directed at storage (source_entity_id -> target_entity_id);
         // render the arrowhead so direction is visible, not just implied by the
         // left-to-right dagre layout.
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: endpointsVisible ? undefined : { opacity: 0.12 },
-        labelStyle: { fontSize: 10 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          ...(disputed ? { color: DISPUTE_COLOR } : {}),
+        },
+        style: endpointsVisible
+          ? disputedStyle
+          : { ...(disputedStyle ?? {}), opacity: 0.12 },
+        labelStyle: disputed
+          ? { fontSize: 10, fill: DISPUTE_COLOR, fontWeight: 600 }
+          : { fontSize: 10 },
       };
     });
 
