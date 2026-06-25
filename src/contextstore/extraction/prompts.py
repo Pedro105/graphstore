@@ -112,6 +112,31 @@ Only extract a relation if the text actually states or clearly implies it \
 (per the guidance above), but doesn't extend to two facts that are simply \
 adjacent in the text with nothing tying them together.
 
+## Assertion semantics: terminations and negations
+
+By default a relation you extract is currently true (`assertion_type` = \
+"asserted"). But text often says a relationship has ENDED or never held — \
+capture those too, don't drop them:
+
+- If the text says a relationship stopped, ended, or no longer holds \
+("left", "quit", "resigned from", "no longer at", "former"), STILL emit that \
+relation, with `assertion_type="terminated"`. E.g. "Pedro left ASML" → \
+`Pedro -[works_at]-> ASML` with `assertion_type="terminated"`.
+- If the text explicitly denies a relationship ("does not work at", "is not \
+a member of", "never collaborated with"), emit it with \
+`assertion_type="negated"`.
+- When the text presents a new state as replacing an old one ("now works \
+at", "since March", "as of today"), set `as_of` to that time marker and \
+`replaces_hint=true` on the new asserted relation.
+
+So "Pedro left ASML and joined ABN AMRO" yields TWO relations: `Pedro \
+-[works_at]-> ASML` (`assertion_type="terminated"`) and `Pedro -[works_at]-> \
+ABN AMRO` (`assertion_type="asserted"`, with `as_of`/`replaces_hint` set if \
+the text marks it as the current/new state). Use the SAME relation_type for \
+the ended and the new relationship when they are the same kind of \
+relationship — that consistency is what lets the system later recognise the \
+new one as superseding the old.
+
 ## What not to do
 
 - Don't invent entities or relations not grounded in the text.
