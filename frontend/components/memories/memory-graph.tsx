@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
+  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
@@ -114,6 +115,10 @@ export function MemoryGraph({
         target: relation.target_entity_id,
         label: relation.relation_type,
         animated: recallRelevant,
+        // Edges are directed at storage (source_entity_id -> target_entity_id);
+        // render the arrowhead so direction is visible, not just implied by the
+        // left-to-right dagre layout.
+        markerEnd: { type: MarkerType.ArrowClosed },
         style: endpointsVisible ? undefined : { opacity: 0.12 },
         labelStyle: { fontSize: 10 },
       };

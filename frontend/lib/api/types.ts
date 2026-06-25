@@ -18,6 +18,9 @@ export interface Entity {
   id: string;
   name: string;
   entity_type: string;
+  // Every type ever observed for this entity (canonical entity_type included);
+  // entity resolution accumulates type disagreement here instead of forking.
+  observed_types?: string[];
   properties: Record<string, unknown>;
   scope: Scope;
   provenance: Provenance;
