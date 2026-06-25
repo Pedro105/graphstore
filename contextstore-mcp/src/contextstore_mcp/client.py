@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from contextstore_mcp.models import RecallResult, RememberResult
+from contextstore_mcp.models import Conflict, RecallResult, RememberResult
 
 
 class ContextStoreClient:
@@ -74,6 +74,11 @@ class ContextStoreClient:
         )
         response.raise_for_status()
         return RecallResult.model_validate(response.json())
+
+    async def inspect_conflicts(self) -> list[Conflict]:
+        response = await self._client.get("/v1/conflicts", headers=self._headers())
+        response.raise_for_status()
+        return [Conflict.model_validate(item) for item in response.json()]
 
     async def aclose(self) -> None:
         await self._client.aclose()

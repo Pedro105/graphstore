@@ -13,6 +13,8 @@ os.environ.setdefault("CONTEXTSTORE_API_KEY", "test-key")
 
 from contextstore_mcp import server  # noqa: E402
 from contextstore_mcp.models import (  # noqa: E402
+    Conflict,
+    ConflictingClaim,
     Entity,
     Provenance,
     RecallResult,
@@ -68,10 +70,54 @@ def test_format_recall_empty():
     assert server._format_recall_result(RecallResult()) == "No relevant memories found."
 
 
+def test_format_conflicts_empty():
+    assert "No unresolved conflicts" in server._format_conflicts([])
+
+
+def test_format_conflicts_lists_competing_claims_with_asserters():
+    conflict = Conflict(
+        subject_name="Pedro",
+        predicate="works_at",
+        claims=[
+            ConflictingClaim(object_name="ASML", asserted_by=["agent_a"]),
+            ConflictingClaim(object_name="Booking", asserted_by=["agent_b"]),
+        ],
+    )
+    out = server._format_conflicts([conflict])
+    assert "Pedro [works_at]" in out
+    assert "ASML" in out and "agent_a" in out
+    assert "Booking" in out and "agent_b" in out
+
+
 async def test_tools_are_registered():
     tools = await server.mcp.list_tools()
     names = {t.name for t in tools}
-    assert {"contextstore_remember", "contextstore_recall"} <= names
+    assert {
+        "contextstore_remember",
+        "contextstore_recall",
+        "contextstore_inspect_conflicts",
+    } <= names
+
+
+async def test_inspect_conflicts_tool_calls_client_and_formats(monkeypatch):
+    fake = AsyncMock(
+        return_value=[
+            Conflict(
+                subject_name="Pedro",
+                predicate="works_at",
+                claims=[
+                    ConflictingClaim(object_name="ASML", asserted_by=["agent_a"]),
+                    ConflictingClaim(object_name="Booking", asserted_by=["agent_b"]),
+                ],
+            )
+        ]
+    )
+    monkeypatch.setattr(server.client, "inspect_conflicts", fake)
+
+    out = await server.contextstore_inspect_conflicts()
+
+    assert "Pedro [works_at]" in out
+    assert "ASML" in out and "Booking" in out
 
 
 async def test_remember_tool_calls_client_and_formats(monkeypatch):

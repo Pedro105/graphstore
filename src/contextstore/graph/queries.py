@@ -82,3 +82,7 @@ DETACH DELETE c, n
 # Count entities and live claims for a tenant (admin/per-project stats).
 COUNT_ENTITIES = "MATCH (n:Entity) RETURN count(n)"
 COUNT_LIVE_CLAIMS = "MATCH (c:Claim) WHERE c.status IN ['active', 'disputed'] RETURN count(c)"
+
+# Disputed claims -- the unresolved cross-asserter conflicts, for the inspection
+# endpoint / MCP tool (Stage 3: surface the wedge).
+DISPUTED_CLAIMS = "MATCH (c:Claim) WHERE c.status = 'disputed' RETURN c"

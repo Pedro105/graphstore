@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 from contextstore_mcp.client import ContextStoreClient
 from contextstore_mcp.config import get_mcp_settings
-from contextstore_mcp.models import RecallResult, RememberResult
+from contextstore_mcp.models import Conflict, RecallResult, RememberResult
 
 settings = get_mcp_settings()
 # The API key is sent as a Bearer token on every call; the backend resolves the
@@ -24,6 +24,22 @@ def _format_remember_result(memory: RememberResult) -> str:
         return "Stored, but no entities were extracted from this content."
     entity_summary = ", ".join(f"{e.name} ({e.entity_type})" for e in memory.entities)
     return f"Stored. Extracted entities: {entity_summary}."
+
+
+def _format_conflicts(conflicts: list[Conflict]) -> str:
+    if not conflicts:
+        return "No unresolved conflicts: no facts are currently disputed between agents."
+    lines = [f"{len(conflicts)} unresolved conflict(s):"]
+    for conflict in conflicts:
+        lines.append("")
+        lines.append(f"- {conflict.subject_name} [{conflict.predicate}]:")
+        for claim in conflict.claims:
+            asserters = ", ".join(claim.asserted_by) or "unknown"
+            lines.append(
+                f"    • {claim.object_name} "
+                f"(asserted by: {asserters}, confidence: {claim.confidence:.2f})"
+            )
+    return "\n".join(lines)
 
 
 def _format_recall_result(result: RecallResult) -> str:
@@ -128,6 +144,31 @@ async def contextstore_recall(query: str, extra_scope: dict[str, str] | None = N
         synthesise=True,
     )
     return _format_recall_result(result)
+
+
+@mcp.tool()
+async def contextstore_inspect_conflicts() -> str:
+    """Inspect facts in shared memory that are currently DISPUTED between agents.
+
+    Use this to find where different writers (agents, jobs, or features) have
+    contributed conflicting facts about the same thing that the system could not
+    automatically reconcile -- e.g. two agents asserting different current
+    employers for the same person. Each conflict lists the subject, the kind of
+    relationship, and every competing claim with who asserted it. Nothing is
+    silently dropped: both sides of a disagreement are preserved and shown here
+    until resolved.
+
+    Use it when you need to know whether the memory you're about to rely on is
+    contested, before acting on a single value, or to audit multi-agent
+    agreement. It returns only live, unresolved disputes -- not superseded
+    history.
+
+    Returns:
+        A human-readable list of disputed facts and their competing claims, or a
+        message that nothing is currently disputed.
+    """
+    conflicts = await client.inspect_conflicts()
+    return _format_conflicts(conflicts)
 
 
 def main() -> None:

@@ -354,6 +354,37 @@ async def test_ensure_graph_initialized_is_idempotent(store, tenant_id):
 # --- Admin operator support: graph_stats / drop_graph ------------------------
 
 
+async def test_find_disputed_claims_returns_disputed_excludes_resolved(store, tenant_id):
+    scope = make_scope(tenant_id)
+    provenance = make_provenance()
+    pedro = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
+    asml = Entity(name="ASML", entity_type="org", scope=scope, provenance=provenance)
+    booking = Entity(name="Booking", entity_type="org", scope=scope, provenance=provenance)
+    superseded_obj = Entity(name="Old", entity_type="org", scope=scope, provenance=provenance)
+    await store.write_memory(
+        Memory(
+            content="seed",
+            entities=[pedro, asml, booking, superseded_obj],
+            scope=scope,
+            provenance=provenance,
+        )
+    )
+    await store.upsert_claim(
+        make_claim(scope, pedro.id, asml.id, status="disputed", asserted_by=["agent_a"]), "m1"
+    )
+    await store.upsert_claim(
+        make_claim(scope, pedro.id, booking.id, status="disputed", asserted_by=["agent_b"]), "m1"
+    )
+    # A superseded (resolved) fact must NOT surface as a live conflict.
+    await store.upsert_claim(
+        make_claim(scope, pedro.id, superseded_obj.id, status="superseded"), "m1"
+    )
+
+    disputed = await store.find_disputed_claims(scope)
+    objects = {c.object_id for c in disputed}
+    assert objects == {asml.id, booking.id}
+
+
 async def test_graph_stats_zero_for_unwritten_tenant(store, tenant_id):
     # A tenant whose graph was never written to reports (0, 0), not an error.
     assert await store.graph_stats(tenant_id) == (0, 0)

@@ -68,6 +68,11 @@ class GraphStore(ABC):
         vocabulary bias). Replaces the old traverse-based relation-type scan."""
 
     @abstractmethod
+    async def find_disputed_claims(self, scope: Scope) -> list[FactClaim]:
+        """All disputed `:Claim` nodes in `scope`'s tenant -- the unresolved
+        cross-asserter conflicts surfaced by the inspection endpoint / MCP tool."""
+
+    @abstractmethod
     async def get_entity(self, entity_id: UUID, tenant_id: str) -> Entity | None:
         """Fetch a single entity by id, or None if it doesn't exist."""
 

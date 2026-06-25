@@ -396,6 +396,75 @@ async def get_entity_claims(
     )
 
 
+# --- Conflicts: disputed facts where agents contend (the coherence wedge) -----
+#
+# When two agents assert conflicting single-valued facts about the same subject
+# and neither carries a supersession signal, the adjudicator marks both claims
+# `disputed` rather than silently picking a winner (resolution/conflict_resolver).
+# This endpoint surfaces those live disputes with full provenance so an operator
+# -- or an agent, via the MCP tool -- can inspect and resolve them. Superseded /
+# retracted history is deliberately excluded: this is current, unresolved contention.
+
+
+class ConflictingClaim(BaseModel):
+    claim_id: UUID
+    object_id: UUID
+    object_name: str
+    asserted_by: list[str]
+    confidence: float
+    asserted_at: datetime
+    status: str
+
+
+class Conflict(BaseModel):
+    """One contended fact: a subject + predicate with two or more live, mutually
+    conflicting claims, each from (potentially) different asserters."""
+
+    subject_id: UUID
+    subject_name: str
+    predicate: str
+    claims: list[ConflictingClaim]
+
+
+@router.get("/conflicts", response_model=list[Conflict])
+async def list_conflicts(
+    graph_store: GraphStoreDep,
+    auth: Annotated[AuthContext, Depends(require_api_key)],
+) -> list[Conflict]:
+    """Live disputes in the authenticated tenant's graph: facts where claims from
+    (typically) different agents conflict and none supersedes the other, grouped
+    by subject+predicate, with each competing claim's asserter(s), confidence and
+    timestamp. The multi-agent coherence wedge made inspectable."""
+    scope = Scope.from_dict({"tenant_id": auth.tenant_id})
+    disputed = await graph_store.find_disputed_claims(scope)
+    if not disputed:
+        return []
+    entities = await graph_store.find_entities(scope)
+    names = {entity.id: entity.name for entity in entities}
+
+    conflicts: dict[tuple[UUID, str], Conflict] = {}
+    for claim in disputed:
+        key = (claim.subject_id, claim.predicate)
+        item = ConflictingClaim(
+            claim_id=claim.id,
+            object_id=claim.object_id,
+            object_name=names.get(claim.object_id, str(claim.object_id)),
+            asserted_by=claim.asserted_by,
+            confidence=claim.confidence,
+            asserted_at=claim.valid_from,
+            status=claim.status,
+        )
+        if key not in conflicts:
+            conflicts[key] = Conflict(
+                subject_id=claim.subject_id,
+                subject_name=names.get(claim.subject_id, str(claim.subject_id)),
+                predicate=claim.predicate,
+                claims=[],
+            )
+        conflicts[key].claims.append(item)
+    return list(conflicts.values())
+
+
 @router.delete("/entities/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_entity(
     entity_id: UUID,

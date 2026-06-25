@@ -165,3 +165,57 @@ async def test_raises_on_http_error_status():
 
     with pytest.raises(httpx.HTTPStatusError):
         await client.remember(content="x", source="mcp")
+
+
+CONFLICTS_RESPONSE = [
+    {
+        "subject_id": "22222222-2222-2222-2222-222222222222",
+        "subject_name": "Pedro",
+        "predicate": "works_at",
+        "claims": [
+            {
+                "claim_id": "33333333-3333-3333-3333-333333333333",
+                "object_id": "44444444-4444-4444-4444-444444444444",
+                "object_name": "ASML",
+                "asserted_by": ["agent_a"],
+                "confidence": 1.0,
+                "asserted_at": "2026-06-25T00:00:00Z",  # extra-ish, ignored by model
+                "status": "disputed",
+            },
+            {
+                "claim_id": "55555555-5555-5555-5555-555555555555",
+                "object_id": "66666666-6666-6666-6666-666666666666",
+                "object_name": "Booking",
+                "asserted_by": ["agent_b"],
+                "confidence": 1.0,
+                "asserted_at": "2026-06-25T00:00:00Z",
+                "status": "disputed",
+            },
+        ],
+    }
+]
+
+
+async def test_inspect_conflicts_gets_correct_path_and_parses_competing_claims():
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=CONFLICTS_RESPONSE)
+
+    client = ContextStoreClient(
+        base_url="http://testserver",
+        api_key="secret123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    conflicts = await client.inspect_conflicts()
+
+    assert len(captured) == 1
+    assert captured[0].method == "GET"
+    assert captured[0].url.path == "/v1/conflicts"
+    assert captured[0].headers["authorization"] == "Bearer secret123"
+    assert len(conflicts) == 1
+    assert conflicts[0].subject_name == "Pedro"
+    assert {c.object_name for c in conflicts[0].claims} == {"ASML", "Booking"}
+    assert {a for c in conflicts[0].claims for a in c.asserted_by} == {"agent_a", "agent_b"}

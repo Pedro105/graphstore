@@ -47,3 +47,18 @@ class RecallResult(BaseModel):
     entities: list[Entity] = []
     relations: list[Relation] = []
     synthesis: Synthesis | None = None
+
+
+class ConflictingClaim(BaseModel):
+    object_name: str
+    asserted_by: list[str] = []
+    confidence: float = 1.0
+
+
+class Conflict(BaseModel):
+    """One contended fact from /v1/conflicts: a subject+predicate with two or
+    more live claims that conflict, each from (potentially) different agents."""
+
+    subject_name: str
+    predicate: str
+    claims: list[ConflictingClaim] = []

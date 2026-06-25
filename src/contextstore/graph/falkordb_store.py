@@ -278,6 +278,15 @@ class FalkorDBGraphStore(GraphStore):
             return []
         return sorted({row[0] for row in result.result_set if row[0]})
 
+    async def find_disputed_claims(self, scope: Scope) -> list[FactClaim]:
+        graph = self._graph_for(scope.tenant_id)
+        try:
+            result = await graph.query(queries.DISPUTED_CLAIMS)
+        except ResponseError:
+            return []
+        claims = (node_to_claim(row[0].properties) for row in result.result_set)
+        return [claim for claim in claims if scope.includes(claim.scope)]
+
     async def get_entity(self, entity_id: UUID, tenant_id: str) -> Entity | None:
         graph = self._graph_for(tenant_id)
         result = await graph.query(
