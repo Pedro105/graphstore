@@ -106,19 +106,23 @@ async def test_repeated_relation_between_same_entities_merges_not_duplicates(
     pedro_id = next(iter(pedro_ids))
     asml_id = next(iter(asml_ids))
 
+    # In the reified-claim model the same fact asserted twice corroborates into
+    # ONE :Claim node (support_count 2), not two -- the adjudicator's row 3.
     graph = graph_store._graph_for(tenant_id)
     result = await graph.query(
-        "MATCH (a:Entity {id: $pedro})-[r]->(b:Entity {id: $asml}) "
-        "RETURN type(r), r.support_count, r.id",
+        "MATCH (c:Claim)-[:SUBJECT]->(:Entity {id: $pedro}) "
+        "MATCH (c)-[:OBJECT]->(:Entity {id: $asml}) "
+        "WHERE c.status = 'active' "
+        "RETURN c.predicate, c.support_count, c.id",
         {"pedro": str(pedro_id), "asml": str(asml_id)},
     )
 
-    print(f"Edges between Pedro and ASML: {result.result_set}")
+    print(f"Claims between Pedro and ASML: {result.result_set}")
 
     assert len(result.result_set) == 1, (
-        f"expected exactly one edge between Pedro and ASML after two writes of the "
-        f"same fact, found {len(result.result_set)}: {result.result_set}"
+        f"expected exactly one active claim between Pedro and ASML after two writes "
+        f"of the same fact, found {len(result.result_set)}: {result.result_set}"
     )
-    relation_type, support_count, _edge_id = result.result_set[0]
-    print(f"Relation type: {relation_type!r}, support_count: {support_count}")
+    predicate, support_count, _claim_id = result.result_set[0]
+    print(f"Predicate: {predicate!r}, support_count: {support_count}")
     assert support_count == 2

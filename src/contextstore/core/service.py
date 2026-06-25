@@ -19,12 +19,14 @@ from contextstore.extraction.extractor import extract
 from contextstore.graph.store import GraphStore
 from contextstore.models.classification import ClassifierResult
 from contextstore.models.entity import Entity
+from contextstore.models.fact_claim import ClaimAssertion
 from contextstore.models.memory import Memory
 from contextstore.models.provenance import Provenance
 from contextstore.models.recall import RecallResult, RetrievalMode, RetrievalStats
 from contextstore.models.relation import Relation
 from contextstore.models.scope import Scope
 from contextstore.core.synthesiser import RecallSynthesiser
+from contextstore.resolution.conflict_resolver import adjudicate
 from contextstore.resolution.entity_resolver import resolve_entity
 from contextstore.retrieval.fusion import reciprocal_rank_fusion
 from contextstore.vector.embeddings import EmbeddingProvider
@@ -33,26 +35,10 @@ logger = structlog.get_logger()
 
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9_]+")
 
-
-async def _existing_relation_types(scope: Scope, graph_store: GraphStore) -> list[str]:
-    """Distinct relation_type strings already used in this tenant's graph,
-    passed into extract() so it's biased toward reusing one instead of
-    inventing a synonym for the same conceptual fact (see
-    extraction/extractor.py's _build_user_message for why).
-
-    Built from the same two GraphStore methods api/routes.py's GET /v1/graph
-    already composes (find_entities + a 1-hop traverse from every entity)
-    -- no new GraphStore method needed. Cost: one full-tenant read on every
-    remember() call, scaling with tenant size. Fine at demo scale; would
-    need caching or a dedicated index at a much larger one.
-    """
-    entities = await graph_store.find_entities(scope)
-    if not entities:
-        return []
-    traversal_results = await graph_store.traverse([entity.id for entity in entities], 1, scope)
-    return sorted(
-        {relation.relation_type for _, relations in traversal_results for relation in relations}
-    )
+# Terminations/negations are adjudicated before plain assertions within one
+# write, so "left A" retracts A's claim before "joined B" is weighed -- order
+# the assertions so the retraction lands first.
+_ASSERTION_ORDER = {"terminated": 0, "negated": 0, "asserted": 1}
 
 
 def _normalize_relation_type(relation_type: str) -> str:
@@ -85,9 +71,9 @@ async def remember(
     settings = get_settings()
     await graph_store.ensure_graph_initialized(scope.tenant_id, settings.embedding_dimension)
 
-    existing_relation_types = await _existing_relation_types(scope, graph_store)
+    existing_predicates = await graph_store.find_predicates(scope)
     extracted_entities, extracted_relations, tokens_used = await extract(
-        content, existing_relation_types
+        content, existing_predicates
     )
     provenance = Provenance(source=source, confidence=confidence, evidence=evidence)
 
@@ -98,6 +84,7 @@ async def remember(
         )
 
     relations: list[Relation] = []
+    assertions: list[ClaimAssertion] = []
     for extracted_relation in extracted_relations:
         source_entity = resolved_by_name.get(extracted_relation.source_name)
         target_entity = resolved_by_name.get(extracted_relation.target_name)
@@ -108,14 +95,33 @@ async def remember(
                 target_name=extracted_relation.target_name,
             )
             continue
+        predicate = _normalize_relation_type(extracted_relation.relation_type)
+        # The display Relation on the returned Memory reflects what this write
+        # asserted (raw predicate); the persisted fact is the adjudicated claim.
         relations.append(
             Relation(
                 source_entity_id=source_entity.id,
                 target_entity_id=target_entity.id,
-                relation_type=_normalize_relation_type(extracted_relation.relation_type),
+                relation_type=extracted_relation.relation_type,
                 properties=extracted_relation.properties,
                 scope=scope,
                 provenance=provenance,
+            )
+        )
+        assertions.append(
+            ClaimAssertion(
+                subject_id=source_entity.id,
+                object_id=target_entity.id,
+                subject_name=source_entity.name,
+                object_name=target_entity.name,
+                predicate=predicate,
+                raw_predicate=extracted_relation.relation_type,
+                assertion_type=extracted_relation.assertion_type,
+                as_of=extracted_relation.as_of,
+                replaces_hint=extracted_relation.replaces_hint,
+                properties=extracted_relation.properties,
+                provenance=provenance,
+                scope=scope,
             )
         )
 
@@ -126,7 +132,17 @@ async def remember(
         scope=scope,
         provenance=provenance,
     )
+    # Entities first (so claim edges have endpoints), then adjudicate and persist
+    # each fact as a :Claim, in termination-before-assertion order.
     await graph_store.write_memory(memory)
+    memory_id = str(memory.id)
+    for assertion in sorted(assertions, key=lambda a: _ASSERTION_ORDER[a.assertion_type]):
+        candidates = await graph_store.find_active_claims(
+            scope, assertion.subject_id, assertion.predicate
+        )
+        for claim in await adjudicate(assertion, candidates):
+            await graph_store.upsert_claim(claim, memory_id)
+
     return memory, tokens_used
 
 

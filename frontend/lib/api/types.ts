@@ -36,6 +36,11 @@ export interface Relation {
   properties: Record<string, unknown>;
   scope: Scope;
   provenance: Provenance;
+  // Coherence state of the fact this edge collapses from a claim: "active" for a
+  // current undisputed fact, "disputed" when live claims from different asserters
+  // conflict. `disputed_with` lists the conflicting claim ids.
+  status?: string;
+  disputed_with?: string[];
 }
 
 export interface Memory {
