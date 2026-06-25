@@ -118,6 +118,7 @@ def _entity_to_node_props(entity: Entity, memory_id: str) -> dict[str, Any]:
     return {
         "name": entity.name,
         "entity_type": entity.entity_type,
+        "observed_types_json": json.dumps(entity.observed_types or [entity.entity_type]),
         "properties_json": json.dumps(entity.properties),
         "scope_json": json.dumps(entity.scope.to_query_dict()),
         "provenance_json": entity.provenance.model_dump_json(),
@@ -133,6 +134,11 @@ def _node_to_entity(properties: dict[str, Any]) -> Entity:
         id=UUID(properties["id"]),
         name=properties["name"],
         entity_type=properties["entity_type"],
+        # Legacy nodes written before observed_types existed fall back to the
+        # single canonical type, so the field is always populated on read.
+        observed_types=json.loads(
+            properties.get("observed_types_json") or json.dumps([properties["entity_type"]])
+        ),
         properties=json.loads(properties.get("properties_json", "{}")),
         scope=Scope.from_dict(json.loads(properties["scope_json"])),
         provenance=Provenance.model_validate_json(properties["provenance_json"]),

@@ -188,15 +188,19 @@ async def test_name_match_beats_a_higher_scored_different_name_candidate():
     assert result.id == exact.id
 
 
-async def test_embeds_entity_type_and_name():
+async def test_embeds_name_only_not_type():
+    # The type is no longer baked into the embedding (it pushed
+    # surface-identical entities of different types apart); name only.
     graph_store, embedding_provider = make_mocks([])
 
     await resolve_entity(EXTRACTED, SCOPE, PROVENANCE, graph_store, embedding_provider)
 
-    embedding_provider.embed.assert_awaited_once_with("person: Pedro Costa")
+    embedding_provider.embed.assert_awaited_once_with("Pedro Costa")
 
 
-async def test_searches_within_scope_filtered_by_entity_type():
+async def test_searches_without_a_hard_type_filter():
+    # Resolution now passes entity_type=None so the store returns cross-type
+    # candidates; type is reconciled by the resolver, not partitioned on.
     graph_store, embedding_provider = make_mocks([])
 
     await resolve_entity(EXTRACTED, SCOPE, PROVENANCE, graph_store, embedding_provider)
@@ -205,7 +209,85 @@ async def test_searches_within_scope_filtered_by_entity_type():
     args = graph_store.find_similar_entities.await_args.args
     assert args[0] == SCOPE
     assert args[1] == QUERY_EMBEDDING
-    assert args[2] == "person"
+    assert args[2] is None
+
+
+# --- Stage 0a acceptance: type is a soft signal, not a hard partition --------
+
+
+async def test_same_name_different_type_merges_into_one_node():
+    """Acceptance (Symptom 1): "Acme" the Organization and "Acme" the Product
+    resolve to a SINGLE entity, with both types recorded -- not two forked
+    nodes. The exact-name fast path now crosses entity types."""
+    existing = make_existing_entity(
+        name="Acme", entity_type="Organization", observed_types=["Organization"]
+    )
+    # High vector score (name-only embeddings of "Acme" vs "Acme" are near).
+    graph_store, embedding_provider = make_mocks([(existing, 0.97)])
+    extracted = ExtractedEntity(name="Acme", entity_type="Product")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id == existing.id  # merged, not forked
+    assert result.entity_type == "Organization"  # canonical/first-writer stays stable
+    assert set(result.observed_types) == {"Organization", "Product"}  # disagreement recorded
+
+
+async def test_same_name_different_type_merges_even_below_vector_threshold():
+    """The cross-type merge does not depend on a high vector score -- the
+    exact-name match forces it even when the embedding falls well short."""
+    existing = make_existing_entity(
+        name="Acme", entity_type="Organization", observed_types=["Organization"]
+    )
+    graph_store, embedding_provider = make_mocks([(existing, 0.40)])
+    extracted = ExtractedEntity(name="Acme", entity_type="Product")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id == existing.id
+    assert set(result.observed_types) == {"Organization", "Product"}
+
+
+async def test_different_name_different_type_stays_separate():
+    """Regression: dropping the type partition must not over-merge. A genuinely
+    different entity (different name) of a different type stays its own node."""
+    existing = make_existing_entity(
+        name="Acme", entity_type="Organization", observed_types=["Organization"]
+    )
+    # Different name, only a weak vector neighbour -> no merge.
+    graph_store, embedding_provider = make_mocks([(existing, 0.55)])
+    extracted = ExtractedEntity(name="Globex", entity_type="Product")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id != existing.id
+    assert result.entity_type == "Product"
+    assert result.observed_types == ["Product"]
+
+
+async def test_type_mismatch_penalty_keeps_borderline_vector_match_as_candidate():
+    """A different-type candidate sitting just above the merge threshold is
+    nudged down by the penalty to a candidate (not an auto-merge), so type
+    still carries weight on the fuzzy path without hard-blocking."""
+    existing = make_existing_entity(
+        name="Acme Corp", entity_type="Organization", observed_types=["Organization"]
+    )
+    # 0.93 raw - 0.05 penalty = 0.88 -> below 0.92 merge, above 0.80 candidate.
+    graph_store, embedding_provider = make_mocks([(existing, 0.93)])
+    extracted = ExtractedEntity(name="Acme Product Line", entity_type="Product")
+
+    result = await resolve_entity(extracted, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.id != existing.id
+    assert result.merge_candidates == [existing.id]
+
+
+async def test_new_entity_records_its_own_type_in_observed_types():
+    graph_store, embedding_provider = make_mocks([])
+
+    result = await resolve_entity(EXTRACTED, SCOPE, PROVENANCE, graph_store, embedding_provider)
+
+    assert result.observed_types == ["person"]
 
 
 async def test_only_top_candidate_decides_outcome_even_with_multiple_results():
