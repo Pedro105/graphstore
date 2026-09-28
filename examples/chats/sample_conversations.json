@@ -1,0 +1,170 @@
+[
+  {
+    "title": "Project Lighthouse Planning",
+    "create_time": 1695312000,
+    "mapping": {
+      "msg-1": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["Tell me about the Project Lighthouse team structure."]},
+          "create_time": 1695312001
+        },
+        "parent": null,
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["Project Lighthouse is led by Sarah Chen, who serves as the technical lead. The team includes Marcus Thompson as the backend engineer and Elena Rodriguez handling frontend development. They're building a real-time analytics dashboard using React and PostgreSQL."]},
+          "create_time": 1695312010
+        },
+        "parent": "msg-1",
+        "children": ["msg-3"]
+      },
+      "msg-3": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["What's the timeline for the project?"]},
+          "create_time": 1695312020
+        },
+        "parent": "msg-2",
+        "children": ["msg-4"]
+      },
+      "msg-4": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["The project started in August 2023 with a target launch date of December 2023. Sarah mentioned they're currently in the beta testing phase with three pilot customers: Acme Corp, TechStart Inc, and Global Analytics."]},
+          "create_time": 1695312030
+        },
+        "parent": "msg-3",
+        "children": []
+      }
+    }
+  },
+  {
+    "title": "Tech Stack Discussion",
+    "create_time": 1695398400,
+    "mapping": {
+      "msg-1": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["What technologies is Marcus Thompson working with on the backend?"]},
+          "create_time": 1695398401
+        },
+        "parent": null,
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["Marcus Thompson is the primary backend engineer for Project Lighthouse. He's built the API layer using FastAPI and Python 3.11. For the database, they chose PostgreSQL with TimescaleDB extensions for time-series data. The infrastructure runs on AWS using ECS containers."]},
+          "create_time": 1695398410
+        },
+        "parent": "msg-1",
+        "children": ["msg-3"]
+      },
+      "msg-3": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["How does Elena's frontend connect to Marcus's backend?"]},
+          "create_time": 1695398420
+        },
+        "parent": "msg-2",
+        "children": ["msg-4"]
+      },
+      "msg-4": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["Elena Rodriguez built the frontend using React 18 with TypeScript. She uses React Query for data fetching, which connects to Marcus's FastAPI backend through a REST API. They also added WebSocket support for real-time dashboard updates. The frontend is deployed to Vercel while the backend runs on AWS."]},
+          "create_time": 1695398430
+        },
+        "parent": "msg-3",
+        "children": []
+      }
+    }
+  },
+  {
+    "title": "Customer Feedback Review",
+    "create_time": 1695484800,
+    "mapping": {
+      "msg-1": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["What feedback have we gotten from the pilot customers?"]},
+          "create_time": 1695484801
+        },
+        "parent": null,
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["The pilot feedback has been mixed. Acme Corp loves the dashboard and requested additional filtering capabilities. TechStart Inc had concerns about the pricing model - they thought $500/month was too high for their usage level. Global Analytics reported some performance issues when loading charts with more than 100,000 data points."]},
+          "create_time": 1695484810
+        },
+        "parent": "msg-1",
+        "children": ["msg-3"]
+      },
+      "msg-3": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["Has the team addressed the performance concerns?"]},
+          "create_time": 1695484820
+        },
+        "parent": "msg-2",
+        "children": ["msg-4"]
+      },
+      "msg-4": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["Yes, Marcus Thompson optimized the database queries and added data aggregation at the API level. Elena implemented virtual scrolling in the charts for large datasets. After these changes, Global Analytics confirmed the performance is now acceptable. Sarah Chen is considering lowering the price to $350/month based on TechStart's feedback."]},
+          "create_time": 1695484830
+        },
+        "parent": "msg-3",
+        "children": []
+      }
+    }
+  },
+  {
+    "title": "Team Update - October",
+    "create_time": 1696089600,
+    "mapping": {
+      "msg-1": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["Any updates on the Project Lighthouse team?"]},
+          "create_time": 1696089601
+        },
+        "parent": null,
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["Good news! The team is expanding. Sarah Chen hired James Park as a DevOps engineer to improve the deployment pipeline. James previously worked at Stripe and has experience with Kubernetes. He'll be replacing the ECS setup with a more scalable K8s cluster on AWS EKS."]},
+          "create_time": 1696089610
+        },
+        "parent": "msg-1",
+        "children": ["msg-3"]
+      },
+      "msg-3": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["What about the pricing - did they decide to change it?"]},
+          "create_time": 1696089620
+        },
+        "parent": "msg-2",
+        "children": ["msg-4"]
+      },
+      "msg-4": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["Sarah decided to introduce tiered pricing instead of a flat rate. The new model has three tiers: Starter at $199/month for up to 50k data points, Pro at $399/month for up to 500k data points, and Enterprise with custom pricing. TechStart Inc signed up for the Starter tier after hearing about this change."]},
+          "create_time": 1696089630
+        },
+        "parent": "msg-3",
+        "children": []
+      }
+    }
+  }
+]

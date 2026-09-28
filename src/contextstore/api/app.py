@@ -13,6 +13,7 @@ from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from contextstore.api.admin_routes import router as admin_router
+from contextstore.api.import_routes import router as import_router
 from contextstore.api.routes import router
 from contextstore.core.config import get_settings
 from contextstore.db import postgres
@@ -91,6 +92,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(admin_router)
+app.include_router(import_router)
 
 
 async def _postgres_ok() -> bool:

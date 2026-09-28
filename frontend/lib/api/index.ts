@@ -56,3 +56,10 @@ export {
   deleteProject,
 } from "@/lib/api/projects";
 export type { Project, CreateProjectInput } from "@/lib/api/projects";
+
+export { importChats, uploadChatsFile } from "@/lib/api/imports";
+export type {
+  ChatImportResult,
+  ImportChatsInput,
+  ImportedConversation,
+} from "@/lib/api/imports";

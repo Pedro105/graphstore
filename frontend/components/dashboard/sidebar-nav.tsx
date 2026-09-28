@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   BarChart2,
   Database,
+  FileUp,
   KeyRound,
   LayoutDashboard,
   Target,
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/memories", label: "Memories", icon: Database },
+  { href: "/dashboard/import", label: "Import", icon: FileUp },
   { href: "/dashboard/agents", label: "Agents", icon: Users },
   { href: "/dashboard/frameworks", label: "Frameworks", icon: Workflow },
   { href: "/dashboard/focus-areas", label: "Focus Areas", icon: Target },
