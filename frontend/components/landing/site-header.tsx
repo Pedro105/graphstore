@@ -4,8 +4,6 @@ import { Button } from "@/components/ui/button";
 import { DOCS_URL } from "@/lib/links";
 
 const NAV_LINKS = [
-  { label: "Features", href: "/features", external: false },
-  { label: "Pricing", href: "/pricing", external: false },
   { label: "Docs", href: DOCS_URL, external: true },
   { label: "API", href: "/api-reference", external: false },
 ];
@@ -44,14 +42,18 @@ export function SiteHeader() {
             variant="outline"
             size="sm"
             render={
-              <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" />
+              <a
+                href="https://github.com/Pedro105/graphstore"
+                target="_blank"
+                rel="noopener noreferrer"
+              />
             }
             className="hidden sm:inline-flex"
           >
-            Documentation
+            GitHub
           </Button>
-          <Button size="sm" render={<Link href="/dashboard" />}>
-            Get started
+          <Button size="sm" render={<Link href="/dashboard/memories" />}>
+            Demo
           </Button>
         </div>
       </div>

@@ -1,61 +1,94 @@
-# ContextStore
+# ContextStore (graphstore)
 
-A GraphRAG-based memory layer for AI workflows. See `docs/architecture.md`
-for the full design.
+**A GraphRAG knowledge layer for multi-writer agents** — not chatbot memory,
+but workflow-shaped memory where multiple agents write structured knowledge
+to a shared graph with entity resolution, conflict adjudication, and
+provenance on every fact.
 
-## Run
+## Status
+
+Personal research / portfolio project. Business exploration paused. **The
+hosted Fly.io backend may be offline** — run locally to explore (see
+[Local setup](#local-setup) below).
+
+## Skills demonstrated
+
+- **Reified claim schema**: Facts stored as first-class `:Claim` nodes with
+  provenance, validity windows, and conflict state — not inlined edge
+  properties.
+- **Unstructured→graph ETL**: LLM-powered extraction (Claude Haiku) turns
+  natural language into entities and typed relations.
+- **Entity resolution**: Embedding similarity + property matching merges
+  "Pedro Costa" and "P. Costa" onto one shared entity across independent
+  writes.
+- **Conflict adjudication**: When agents contradict each other, claims enter
+  a `disputed` state for explicit resolution rather than silent overwrites.
+- **Hybrid GraphRAG recall**: Vector seed retrieval followed by graph
+  traversal surfaces connected context that pure similarity search misses.
+- **Eval harness**: Ground-truth dataset with entity presence, property value,
+  and relation value checks — prevents silent regressions.
+- **MCP tools**: Claude Code/Desktop integration via a standalone
+  `uvx`-installable MCP server exposing `remember`/`recall`.
+
+## Architecture
+
+FastAPI backend, FalkorDB graph store with native vector index, Postgres for
+auth/billing metadata. See [`docs/architecture.md`](docs/architecture.md) for
+the full design and [`docs/decisions/`](docs/decisions/) for ADRs.
+
+### Graph model (reified claims)
+
+Claims are reified as `:Claim` nodes linked to subject/object entities via
+`:SUBJECT` / `:OBJECT` edges. The predicate is a node property, not an edge
+type — this allows coherence state (status, validity, provenance,
+supersession, disputes) to live on the fact itself:
+
+```
+(:Entity)<-[:SUBJECT]-(:Claim {
+    predicate: "supplies",
+    status: "active" | "superseded" | "disputed" | "retracted",
+    asserted_by: ["crm-agent", "supplier-agent"],
+    valid_from: datetime,
+    valid_to: datetime | null,
+    supersedes: [claim_id, ...],
+    disputed_with: [claim_id, ...]
+})-[:OBJECT]->(:Entity)
+```
+
+Multiple agents can assert the same fact (corroboration increments
+`support_count`), contradict each other (mutual `disputed_with` links), or
+supersede prior facts (new claim's `supersedes` + old claim's
+`valid_to`/`status`).
+
+## Local setup
+
+### Prerequisites
+
+- Docker (for FalkorDB)
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
+- Node.js 20+ and pnpm (for frontend)
+- An Anthropic API key (for LLM extraction)
 
 ### Backend
 
-Requires FalkorDB running locally (default port):
-
 ```bash
+# Start FalkorDB
 docker run -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest
-```
 
-Then, from the repo root:
+# From repo root
+cp .env.example .env
+# Edit .env: set ANTHROPIC_API_KEY at minimum
 
-```bash
-cp .env.example .env   # fill in ANTHROPIC_API_KEY at minimum
 uv sync
 uv run uvicorn contextstore.api.app:app --reload
 ```
 
-Verify it's up:
+Verify:
 
 ```bash
 curl localhost:8000/health
 curl localhost:8000/ready
 ```
-
-### Authentication & API keys
-
-Every `/v1/` route requires `Authorization: Bearer <key>`; the key resolves
-to a `tenant_id` in Postgres, which is never caller-supplied. Set up:
-
-```bash
-# 1. Apply the schema to your Postgres/Supabase instance
-psql "$DATABASE_URL" -f migrations/001_initial.sql
-
-# 2. Set DATABASE_URL and ADMIN_TOKEN in .env, then (re)start the backend
-
-# 3. Create a user (manual insert, while solo)
-psql "$DATABASE_URL" -c "INSERT INTO users (email) VALUES ('you@example.com') RETURNING id;"
-
-# 4. Mint an API key for that user + tenant (admin-token protected). The raw
-#    key is shown once and never stored — only its bcrypt hash is persisted.
-curl -X POST localhost:8000/v1/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "<uuid-from-step-3>", "tenant_id": "your_tenant", "name": "dev"}'
-
-# Revoke a key:
-curl -X DELETE localhost:8000/v1/keys/<key_id> -H "Authorization: Bearer $ADMIN_TOKEN"
-```
-
-Per-key rate limits (`RATE_LIMIT_RECALL`, `RATE_LIMIT_MEMORIES`, requests/min)
-return `429` with a `Retry-After` header when exceeded. If `DATABASE_URL` is
-unset the `/v1/` routes return `503` rather than running unauthenticated.
 
 ### Frontend
 
@@ -66,52 +99,81 @@ pnpm install
 pnpm dev
 ```
 
-Opens at `http://localhost:3000` (or the next available port).
+Opens at `http://localhost:3000`.
 
 ### MCP server (Claude Code / Claude Desktop)
 
-The MCP server lives in its own standalone package, **`contextstore-mcp/`**
-(not this backend package), so it installs zero-config via `uvx` with none of
-the backend's dependencies. It exposes `remember`/`recall` as MCP tools
-(`contextstore_remember`, `contextstore_recall`), calling the ContextStore API
-over HTTP with `CONTEXTSTORE_API_KEY` (`csk_live_...`); the backend derives the
-tenant from the key. Mint a key via `POST /v1/keys` (see "API keys" below).
-
-Register with Claude Code:
+The MCP server is a standalone package in `contextstore-mcp/` that calls the
+backend over HTTP:
 
 ```bash
 claude mcp add contextstore \
   --env CONTEXTSTORE_API_KEY=csk_live_... \
-  --env CONTEXTSTORE_API_URL=https://contextstore-api.fly.dev \
+  --env CONTEXTSTORE_API_URL=http://localhost:8000 \
   -- uvx contextstore-mcp
 ```
 
-Or, for a team-shared setup checked into the repo, create `.mcp.json` in
-the project root:
+See [`contextstore-mcp/README.md`](contextstore-mcp/README.md) for full
+configuration.
 
-```json
-{
-  "mcpServers": {
-    "contextstore": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["contextstore-mcp"],
-      "env": {
-        "CONTEXTSTORE_API_KEY": "csk_live_...",
-        "CONTEXTSTORE_API_URL": "https://contextstore-api.fly.dev"
-      }
-    }
-  }
-}
-```
+## Demo: coherence and disputes
 
-Verify it registered and connected:
+The memories page (`/dashboard/memories`) visualizes the entity graph with
+disputed edges highlighted. Ingest contradictory facts from different agents
+to see disputes surface:
 
 ```bash
-claude mcp list   # should show "Connected" for contextstore
+# Agent A says price is $10
+curl -X POST localhost:8000/v1/memories \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Acme quoted $10/unit for Product Y","source":"supplier-agent"}'
+
+# Agent B says price is $12
+curl -X POST localhost:8000/v1/memories \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Acme is charging $12/unit for Product Y","source":"pricing-agent"}'
 ```
 
-See `contextstore-mcp/README.md` for full configuration and local development.
+The graph UI shows the conflicting claims with their `disputed` status.
 
-Then inside a Claude Code session, `/mcp` shows its tools, or just ask
-Claude to remember or recall something.
+## Eval harness
+
+```bash
+# Run against local backend
+uv run python eval/run_eval.py
+
+# Against a different backend/tenant
+uv run python eval/run_eval.py \
+  --base-url http://localhost:8000 \
+  --tenant-id contextstore_demo
+```
+
+Reports are written to `eval/reports/`. See [`eval/README.md`](eval/README.md)
+for adding test cases and interpretation.
+
+## What's here vs. what's not
+
+### What's here
+
+- Core API: `remember()`, `recall()`, entity graph inspection
+- LLM extraction with entity resolution and conflict adjudication
+- Hybrid vector + graph retrieval
+- Multi-tenant isolation (graph-per-tenant)
+- MCP server for Claude integration
+- Eval harness with ground-truth checks
+- Next.js frontend with graph visualization
+- Fly.io + Cloudflare deployment configs (`deploy/`, `docs/deployment.md`)
+
+### What's not here
+
+- **No AWS Step Functions / Pulumi** — deployment is Fly.io + Cloudflare
+- **No billing product** — auth/keys exist for API access, but there's no
+  payment integration
+- **No always-on hosted demo** — the Fly.io backend may be offline; run
+  locally
+
+## License
+
+[MIT](LICENSE)
