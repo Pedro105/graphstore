@@ -68,6 +68,39 @@ pnpm dev
 
 Opens at `http://localhost:3000` (or the next available port).
 
+### Import your chats (local)
+
+Turn your ChatGPT or Claude conversation history into a searchable knowledge graph:
+
+**Via the dashboard:**
+
+1. Open `http://localhost:3000/dashboard/import`
+2. Upload your export file or paste the JSON/transcript directly
+3. View the extracted entities in Memories
+
+**Via the API:**
+
+```bash
+# Import ChatGPT export (conversations.json)
+curl -X POST localhost:8000/v1/imports/chats \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "<paste-json-here>"}'
+
+# Or upload a file
+curl -X POST localhost:8000/v1/imports/chats/upload \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@path/to/conversations.json"
+```
+
+**Supported formats:**
+
+- **ChatGPT**: Export from Settings → Data Controls → Export data (use `conversations.json`)
+- **Claude**: JSON export of conversation history
+- **Text transcript**: Markdown with `User:` / `Assistant:` prefixes
+
+Sample files are in `examples/chats/` for testing.
+
 ### MCP server (Claude Code / Claude Desktop)
 
 The MCP server lives in its own standalone package, **`contextstore-mcp/`**
