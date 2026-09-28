@@ -47,18 +47,18 @@ class FakeGraph:
     async def fetch_seeds(self, ids: list[str]) -> list[Entity]:
         return [self.entities[i] for i in ids if i in self.entities]
 
-    async def fetch_neighbours(
-        self, frontier_ids: list[str], visited_ids: list[str]
-    ) -> list[tuple[Entity, Relation]]:
-        visited = set(visited_ids)
+    async def fetch_neighbours(self, frontier_ids: list[str]) -> list[tuple[Entity, Relation]]:
         frontier = set(frontier_ids)
         pairs: list[tuple[Entity, Relation]] = []
         for src, edges in self.out_edges.items():
             for dst, relation in edges:
                 # Undirected: an edge connects the two endpoints either way.
-                if src in frontier and dst not in visited:
+                # All edges incident to the frontier are returned (including to
+                # already-visited neighbours), matching the real store -- the
+                # BFS dedups and decides re-expansion.
+                if src in frontier:
                     pairs.append((self.entities[dst], relation))
-                elif dst in frontier and src not in visited:
+                elif dst in frontier:
                     pairs.append((self.entities[src], relation))
         return pairs
 
@@ -108,6 +108,31 @@ async def test_relations_only_between_accumulated_entities():
     assert len(relations) == 1
     rel = relations[0]
     assert {rel.source_entity_id, rel.target_entity_id} == {UUID(a), UUID(b)}
+
+
+async def test_edges_between_seeds_are_returned():
+    # Regression: when interconnected entities are all seeds, the edges
+    # connecting them must still be returned. Previously the visited-exclusion
+    # in the neighbour fetch dropped every seed<->seed edge, so a recall whose
+    # seeds were interconnected came back with entities but 0 relations.
+    g = FakeGraph()
+    a, b, c = (g.add_entity(n) for n in "ABC")
+    g.add_edge(a, b)
+    g.add_edge(b, c)
+    g.add_edge(a, c)
+
+    entities, relations, _ = await g.traverse([a, b, c], depth=1)
+
+    assert _names(entities) == {"A", "B", "C"}
+    assert len(relations) == 3
+    endpoints = {
+        frozenset({relation.source_entity_id, relation.target_entity_id}) for relation in relations
+    }
+    assert endpoints == {
+        frozenset({UUID(a), UUID(b)}),
+        frozenset({UUID(b), UUID(c)}),
+        frozenset({UUID(a), UUID(c)}),
+    }
 
 
 async def test_cycle_terminates_and_visits_each_node_once():

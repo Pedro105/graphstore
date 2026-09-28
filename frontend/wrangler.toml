@@ -1,4 +1,4 @@
-name = "contextstore-frontend"
+name = "graphstore"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 main = ".open-next/worker.js"
@@ -6,3 +6,16 @@ main = ".open-next/worker.js"
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
+
+# Non-secret runtime config. The backend base URL is public (it's in the OpenAPI
+# spec and copy-able curl snippets), so it lives here as a plain var rather than
+# a dashboard secret -- without it the Worker has no CONTEXTSTORE_API_URL at
+# runtime and falls back to http://localhost:8000, which a Worker subrequest
+# can't reach (Cloudflare returns error 1003). The API KEY stays a secret, set
+# via `wrangler secret put CONTEXTSTORE_API_KEY` / the dashboard.
+[vars]
+CONTEXTSTORE_API_URL = "https://contextstore-api.fly.dev"
+
+[observability.logs]
+enabled = true
+invocation_logs = true

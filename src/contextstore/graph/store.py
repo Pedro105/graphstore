@@ -5,6 +5,7 @@ from uuid import UUID
 
 from contextstore.models.entity import Entity
 from contextstore.models.fact import Fact
+from contextstore.models.fact_claim import FactClaim
 from contextstore.models.memory import Memory
 from contextstore.models.relation import Relation
 from contextstore.models.scope import Scope
@@ -33,7 +34,43 @@ class GraphStore(ABC):
 
     @abstractmethod
     async def write_memory(self, memory: Memory) -> str:
-        """Persist a memory's entities and relations. Returns the memory id."""
+        """Persist a memory's entities (MERGE by id). Returns the memory id.
+
+        Relations are NOT written here in the reified-claim model -- facts are
+        persisted as `:Claim` nodes via `upsert_claim`, after adjudication
+        (resolution/conflict_resolver.py) decides their status. The orchestrating
+        service writes entities first (so claim edges have endpoints), then
+        adjudicates and upserts each claim.
+        """
+
+    @abstractmethod
+    async def find_active_claims(
+        self, scope: Scope, subject_id: UUID, predicate: str
+    ) -> list[FactClaim]:
+        """Active `:Claim` nodes with this subject and normalized predicate, in
+        `scope`'s tenant -- the conflict/corroboration candidates the adjudicator
+        weighs a new assertion against."""
+
+    @abstractmethod
+    async def upsert_claim(self, claim: FactClaim, memory_id: str) -> None:
+        """Create-or-update a `:Claim` node by id (status transitions reuse this)
+        and ensure its `:SUBJECT`/`:OBJECT` edges exist. Idempotent on the edges."""
+
+    @abstractmethod
+    async def project_display_edges(self, scope: Scope) -> list[Relation]:
+        """Every live (active/disputed) claim in `scope`'s tenant, collapsed into
+        display-edge `Relation`s. The single projection both GET /v1/graph and the
+        traversal path consume -- superseded/retracted claims are excluded."""
+
+    @abstractmethod
+    async def find_predicates(self, scope: Scope) -> list[str]:
+        """Distinct raw predicates across the tenant's live claims (extraction
+        vocabulary bias). Replaces the old traverse-based relation-type scan."""
+
+    @abstractmethod
+    async def find_disputed_claims(self, scope: Scope) -> list[FactClaim]:
+        """All disputed `:Claim` nodes in `scope`'s tenant -- the unresolved
+        cross-asserter conflicts surfaced by the inspection endpoint / MCP tool."""
 
     @abstractmethod
     async def get_entity(self, entity_id: UUID, tenant_id: str) -> Entity | None:
@@ -85,19 +122,6 @@ class GraphStore(ABC):
         """
 
     @abstractmethod
-    async def traverse(
-        self,
-        start_entity_ids: list[UUID],
-        max_depth: int,
-        scope: Scope,
-    ) -> list[tuple[Entity, list[Relation]]]:
-        """Walk the graph up to `max_depth` hops from the start entities.
-
-        Returns each reachable entity paired with the relations connecting
-        it back to the traversal, filtered to entities visible within `scope`.
-        """
-
-    @abstractmethod
     async def traverse_from_seeds(
         self,
         scope: Scope,
@@ -120,6 +144,18 @@ class GraphStore(ABC):
     @abstractmethod
     async def delete_memory(self, memory_id: str, tenant_id: str) -> bool:
         """Delete everything written by a given memory. Returns True if anything was deleted."""
+
+    @abstractmethod
+    async def delete_entity(self, entity_id: UUID, tenant_id: str) -> bool:
+        """Hard-delete a single entity (and its incident relations) by id.
+
+        Addresses a tenant directly by id (like `get_entity`/`delete_memory`),
+        since it targets one known node. DETACH-deletes the node so its edges
+        go with it. Returns True if a node was deleted, False if no entity with
+        that id exists in the tenant's graph (the caller turns that into a 404).
+        Tenant-scoped by construction: an id belonging to another tenant isn't
+        in this tenant's graph, so it deletes nothing and returns False.
+        """
 
     @abstractmethod
     async def graph_stats(self, tenant_id: str) -> tuple[int, int]:

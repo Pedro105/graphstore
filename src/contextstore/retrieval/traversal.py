@@ -30,11 +30,17 @@ logger = structlog.get_logger()
 # the caller). A seed with no matching/visible row is simply absent.
 SeedFetcher = Callable[[list[str]], Awaitable[list[Entity]]]
 
-# Fetch one hop out: every (neighbour, connecting_relation) pair for edges
-# from any frontier id to a neighbour whose id is NOT in `visited_ids`. A
-# neighbour reachable by several edges yields several pairs; dedup happens
-# here, not in the fetcher.
-NeighbourFetcher = Callable[[list[str], list[str]], Awaitable[list[tuple[Entity, Relation]]]]
+# Fetch one hop out: every (neighbour, connecting_relation) pair for *all*
+# edges incident to any frontier id -- including edges whose neighbour was
+# already visited. Returning already-visited neighbours is deliberate: it's
+# how edges *between* already-discovered entities (notably the seeds, which
+# are all "visited" from the first hop) make it into the result. Without it,
+# a recall whose seeds are interconnected returns those entities but none of
+# the edges connecting them. Frontier expansion is decided separately by the
+# BFS itself (an already-known neighbour is recorded but not re-expanded), so
+# the fetcher does not need a visited set. A neighbour reachable by several
+# edges yields several pairs; dedup happens here, not in the fetcher.
+NeighbourFetcher = Callable[[list[str]], Awaitable[list[tuple[Entity, Relation]]]]
 
 
 async def breadth_first_traverse(
@@ -63,7 +69,6 @@ async def breadth_first_traverse(
 
     entities_by_id: dict[str, Entity] = {}
     relations_by_id: dict[UUID, Relation] = {}
-    visited: set[str] = set()
     truncated = False
 
     def _add_entity(entity: Entity) -> bool:
@@ -77,7 +82,6 @@ async def breadth_first_traverse(
             truncated = True
             return False
         entities_by_id[entity_id] = entity
-        visited.add(entity_id)
         return True
 
     # Seeds first: they anchor the subgraph and form the initial frontier.
@@ -90,7 +94,7 @@ async def breadth_first_traverse(
 
     hops_completed = 0
     while frontier and hops_completed < depth and not truncated:
-        rows = await fetch_neighbours(frontier, list(visited))
+        rows = await fetch_neighbours(frontier)
         next_frontier: list[str] = []
         for neighbour, relation in rows:
             # Record every encountered edge; relations touching a neighbour

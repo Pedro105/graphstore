@@ -133,11 +133,8 @@ async def get_project_graph(tenant_id: str, graph_store: GraphStoreDep) -> Graph
     entities = await graph_store.find_entities(scope)
     if not entities:
         return GraphSnapshot()
-    traversal_results = await graph_store.traverse([entity.id for entity in entities], 1, scope)
-    relations_by_id = {
-        relation.id: relation for _, relations in traversal_results for relation in relations
-    }
-    return GraphSnapshot(entities=entities, relations=list(relations_by_id.values()))
+    relations = await graph_store.project_display_edges(scope)
+    return GraphSnapshot(entities=entities, relations=relations)
 
 
 # --- Read: full claim history for one entity (provenance inspection) ---------

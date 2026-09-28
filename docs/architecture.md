@@ -115,7 +115,7 @@ routes between strategies based on query shape.
 
 │
 
-├─ Extraction (LLM-based, async via arq workers)
+├─ Extraction (LLM-based, inline per-request)
 
 ├─ Entity resolution (embedding similarity + property matching)
 
@@ -146,7 +146,7 @@ routes between strategies based on query shape.
 - `retrieval/` — query routing, traversal, scoring, hybrid fusion.
 - `core/` — orchestration. The service that the API calls into.
 - `llm/` — provider-agnostic LLM client via LiteLLM.
-- `workers/` — background jobs for async extraction and maintenance.
+- `workers/` — placeholder for background jobs (not yet implemented).
 
 Crossing module boundaries is only allowed via pydantic models defined in
 `models/`. This is the discipline that lets the project scale without

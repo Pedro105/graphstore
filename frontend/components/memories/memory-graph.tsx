@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
+  MarkerType,
   ReactFlow,
   ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
   type Edge,
   type Node,
 } from "@xyflow/react";
@@ -25,6 +28,10 @@ const nodeTypes = { entity: EntityNode };
 // Nodes written within this window are flagged "recent" (pulse) and can be
 // isolated via the Recent toggle.
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Disputed facts (claims from different agents that conflict, unresolved) are
+// drawn in red and dashed so contention is visible at a glance.
+const DISPUTE_COLOR = "#ef4444";
 
 interface MemoryGraphProps {
   entities: Entity[];
@@ -62,7 +69,7 @@ export function MemoryGraph({
     return ids;
   }, [entities]);
 
-  const { nodes, edges } = useMemo(() => {
+  const { nodes: computedNodes, edges: computedEdges } = useMemo(() => {
     const positions = layoutGraph(
       entities.map((entity) => ({ id: entity.id })),
       relations.map((relation) => ({
@@ -106,14 +113,30 @@ export function MemoryGraph({
         recallActive &&
         highlightedIds.has(relation.source_entity_id) &&
         highlightedIds.has(relation.target_entity_id);
+      const disputed = relation.status === "disputed";
+      const disputedStyle = disputed
+        ? { stroke: DISPUTE_COLOR, strokeWidth: 2, strokeDasharray: "6 4" }
+        : undefined;
       return {
         id: relation.id,
         source: relation.source_entity_id,
         target: relation.target_entity_id,
-        label: relation.relation_type,
-        animated: recallRelevant,
-        style: endpointsVisible ? undefined : { opacity: 0.12 },
-        labelStyle: { fontSize: 10 },
+        // Mark disputed edges so contention reads from the label alone.
+        label: disputed ? `⚠ ${relation.relation_type}` : relation.relation_type,
+        animated: recallRelevant || disputed,
+        // Edges are directed at storage (source_entity_id -> target_entity_id);
+        // render the arrowhead so direction is visible, not just implied by the
+        // left-to-right dagre layout.
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          ...(disputed ? { color: DISPUTE_COLOR } : {}),
+        },
+        style: endpointsVisible
+          ? disputedStyle
+          : { ...(disputedStyle ?? {}), opacity: 0.12 },
+        labelStyle: disputed
+          ? { fontSize: 10, fill: DISPUTE_COLOR, fontWeight: 600 }
+          : { fontSize: 10 },
       };
     });
 
@@ -127,6 +150,34 @@ export function MemoryGraph({
     recentIds,
     colorMap,
   ]);
+
+  // React Flow needs to own node/edge state for nodes to be draggable: a fully
+  // controlled `nodes` prop with no onNodesChange handler can't apply drag
+  // position updates, so nodes appear fixed. We mirror the derived graph into
+  // state and feed onNodesChange/onEdgesChange below.
+  const [nodes, setNodes, onNodesChange] = useNodesState<EntityNodeType>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Sync the derived graph into state whenever inputs change, but preserve any
+  // position the user has dragged a node to: an existing node keeps its current
+  // position, only new nodes take the computed layout position. Node `data`
+  // (highlight/dim/recent/color) is always refreshed so recall and filter
+  // changes still reflect visually without snapping dragged nodes back.
+  useEffect(() => {
+    setNodes((previous) => {
+      const positionsById = new Map(
+        previous.map((node) => [node.id, node.position]),
+      );
+      return computedNodes.map((node) => ({
+        ...node,
+        position: positionsById.get(node.id) ?? node.position,
+      }));
+    });
+  }, [computedNodes, setNodes]);
+
+  useEffect(() => {
+    setEdges(computedEdges);
+  }, [computedEdges, setEdges]);
 
   function toggleType(type: string) {
     setSelectedTypes((prev) => {
@@ -207,7 +258,10 @@ export function MemoryGraph({
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
+            nodesDraggable
             fitView
             onNodeClick={handleNodeClick}
             proOptions={{ hideAttribution: true }}

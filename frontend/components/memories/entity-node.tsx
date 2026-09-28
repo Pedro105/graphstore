@@ -23,32 +23,30 @@ export function EntityNode({ data }: NodeProps<EntityNodeType>) {
   return (
     <div
       className={cn(
-        "animate-in fade-in zoom-in-95 relative cursor-pointer rounded-lg border bg-card py-2 pr-3 pl-3.5 text-sm shadow-sm duration-300 transition-opacity hover:shadow-md",
-        data.highlighted ? "ring-2 ring-data-accent" : "border-border",
+        "animate-in fade-in zoom-in-95 relative flex size-28 cursor-pointer flex-col items-center justify-center rounded-full border-2 bg-card p-2 text-center shadow-sm duration-300 transition-opacity hover:shadow-md",
+        data.highlighted && "ring-2 ring-data-accent ring-offset-1",
         data.dimmed && "opacity-25",
       )}
-      style={{ borderLeftColor: data.color, borderLeftWidth: 3 }}
+      style={{ borderColor: data.color }}
     >
       <Handle
         type="target"
         position={Position.Left}
         className="!bg-muted-foreground"
       />
-      <div className="max-w-40 truncate font-medium">{data.label}</div>
+      <div className="max-w-[88px] truncate text-xs font-medium leading-tight">
+        {data.label}
+      </div>
       <div
-        className="flex items-center gap-1.5 font-mono text-[10px]"
+        className="mt-0.5 max-w-[88px] truncate font-mono text-[9px]"
         style={{ color: data.color }}
       >
-        <span
-          className="size-1.5 rounded-full"
-          style={{ backgroundColor: data.color }}
-        />
         {data.entityType}
       </div>
       {data.recent ? (
         <span
           aria-label="Recently written"
-          className="absolute -top-1 -right-1 flex size-2.5"
+          className="absolute top-0 right-0 flex size-2.5"
         >
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-data-accent opacity-60" />
           <span className="relative inline-flex size-2.5 rounded-full bg-data-accent" />

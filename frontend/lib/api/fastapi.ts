@@ -5,15 +5,33 @@
 
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+
+// Runtime environment access. On Cloudflare Workers (OpenNext), dashboard vars
+// and secrets -- notably the CONTEXTSTORE_API_KEY secret -- are bound on the
+// per-request Worker `env` object, exposed via getCloudflareContext().env. They
+// are NOT reliably present on process.env at module-evaluation time, so reading
+// them into a module-level const (as this file used to) captures `undefined`:
+// every proxied request then goes out with an empty Bearer token and the
+// backend rejects it with 403. Reading per request from the Cloudflare env
+// fixes that. Falls back to process.env for local `next dev` on Node, where the
+// Cloudflare context isn't established.
+type RuntimeEnv = Record<string, string | undefined>;
+
+function runtimeEnv(): RuntimeEnv {
+  try {
+    return getCloudflareContext().env as unknown as RuntimeEnv;
+  } catch {
+    // Not running under the Cloudflare adapter (e.g. `next dev` on Node).
+    return process.env as RuntimeEnv;
+  }
+}
 
 // CONTEXTSTORE_API_URL is the new name; FASTAPI_BASE_URL is still honoured as a
 // fallback so existing local setups keep working.
-export const CONTEXTSTORE_API_URL =
-  process.env.CONTEXTSTORE_API_URL ??
-  process.env.FASTAPI_BASE_URL ??
-  "http://localhost:8000";
-
-const API_KEY = process.env.CONTEXTSTORE_API_KEY;
+function apiBaseUrl(env: RuntimeEnv): string {
+  return env.CONTEXTSTORE_API_URL ?? env.FASTAPI_BASE_URL ?? "http://localhost:8000";
+}
 
 // The workspace switcher stores the selected project's tenant_id here. It is
 // NOT a secret -- a tenant_id is just an identifier, and the backend re-verifies
@@ -33,13 +51,15 @@ export async function forwardToFastapi(
   // Attach the API key as a Bearer token server-side. The backend derives the
   // user (and the key's default tenant) from it; the X-Project header below
   // selects which of that user's projects to act on, ownership-checked server-side.
+  const env = runtimeEnv();
+  const apiKey = env.CONTEXTSTORE_API_KEY;
   const headers = new Headers(init?.headers);
-  if (API_KEY) headers.set("Authorization", `Bearer ${API_KEY}`);
+  if (apiKey) headers.set("Authorization", `Bearer ${apiKey}`);
   if (attachProject) {
     const active = (await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value;
     if (active) headers.set("X-Project", active);
   }
-  return fetch(`${CONTEXTSTORE_API_URL}${path}`, { ...init, headers });
+  return fetch(`${apiBaseUrl(env)}${path}`, { ...init, headers });
 }
 
 // Forward to FastAPI using a caller-supplied Authorization header rather than
@@ -54,7 +74,7 @@ export async function forwardAdminToFastapi(
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (authorization) headers.set("Authorization", authorization);
-  return fetch(`${CONTEXTSTORE_API_URL}${path}`, { ...init, headers });
+  return fetch(`${apiBaseUrl(runtimeEnv())}${path}`, { ...init, headers });
 }
 
 // Relay an upstream FastAPI response back to the browser: preserve the status

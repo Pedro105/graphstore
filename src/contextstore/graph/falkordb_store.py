@@ -1,11 +1,17 @@
 """FalkorDB implementation of the GraphStore interface.
 
-Internal schema: entities are nodes labeled `:Entity`; relations are edges
-whose Cypher type is the relation's `relation_type` (validated against
-`_SAFE_IDENTIFIER`, since openCypher requires edge types to be inlined into
-the query rather than passed as parameters). `properties`, `scope`, and
-`provenance` are JSON-serialized into string properties because FalkorDB
-node/edge properties must be scalars or arrays of scalars, not nested maps.
+Internal schema (reified-claim model): entities are nodes labeled `:Entity`;
+facts are reified as `:Claim` nodes linked to their subject and object entities
+by fixed `:SUBJECT` / `:OBJECT` edges -- `(:Claim)-[:SUBJECT]->(:Entity)` and
+`(:Claim)-[:OBJECT]->(:Entity)`. The predicate is a property on the Claim node,
+not the Cypher edge type, so (unlike the previous direct-edge model) nothing is
+inlined into a query string -- all Cypher lives parameterized in graph/queries.py
+and claim (de)serialization in graph/schema.py. A claim carries coherence state
+(status active/superseded/disputed/retracted, validity, asserted_by, supersedes,
+disputed_with); the write path adjudicates new assertions against existing active
+claims (resolution/conflict_resolver.py) before upserting. `properties`, `scope`,
+etc. are JSON-serialized into string properties because FalkorDB node/edge
+properties must be scalars or arrays of scalars, not nested maps.
 
 Tenant isolation: each tenant gets a structurally separate FalkorDB graph
 (named `tenant_<tenant_id>`), selected via `_graph_for`. This is required
@@ -31,23 +37,16 @@ converts this to similarity (`1 - distance`) before returning, so callers
 and config thresholds (VECTOR_MERGE_THRESHOLD etc.) work in the usual
 "higher = more similar" convention.
 
-Relations are deduplicated at write time, keyed on (source_entity_id,
-target_entity_id, relation_type) -- the relationship pattern itself, not
-relation properties (see `_write_relation`). This is an exact string match
-on relation_type, which is otherwise a free string from extraction; nothing
-guarantees two `remember()` calls describing the same conceptual fact pick
-the same relation_type, so `core/service.py` biases extraction to reuse an
-existing tenant's relation_type vocabulary (see
-`_existing_relation_types`/`extraction/extractor.py`) rather than relying on
-the storage layer to reconcile synonyms after the fact. On a match,
-properties/provenance/claims are merged via models/claim.py (not frozen);
-`support_count` increments and `last_seen` updates; the matched edge's
-original `id` is preserved.
+Fact identity / dedup is no longer a storage concern: corroboration and
+conflict are decided by the adjudicator (resolution/conflict_resolver.py) and
+expressed as claim status, not as edge MERGE. `core/service.py` still biases
+extraction to reuse an existing tenant's predicate vocabulary (see
+`find_predicates`/`extraction/extractor.py`) so the same conceptual fact picks
+the same predicate and adjudication can match it.
 """
 
 import json
 import re
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -56,19 +55,21 @@ from falkordb.asyncio import FalkorDB
 from falkordb.asyncio.graph import AsyncGraph
 from redis.exceptions import ResponseError
 
-from contextstore.models.claim import Claim, apply_claim, derive_active_view
+from contextstore.models.claim import Claim
 from contextstore.models.entity import Entity
 from contextstore.models.fact import Fact
+from contextstore.models.fact_claim import FactClaim
 from contextstore.models.memory import Memory
 from contextstore.models.provenance import Provenance
 from contextstore.models.relation import Relation
 from contextstore.models.scope import Scope
+from contextstore.graph import queries
+from contextstore.graph.schema import claim_to_node_props, node_to_claim
 from contextstore.graph.store import GraphStore
 from contextstore.retrieval.traversal import breadth_first_traverse
 
 logger = structlog.get_logger()
 
-_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SAFE_TENANT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # RediSearch's query parser treats most punctuation as operators (notably
@@ -86,15 +87,6 @@ _FULLTEXT_TOKEN = re.compile(r"[A-Za-z0-9]+")
 def _sanitize_fulltext_query(query_text: str) -> str:
     tokens = _FULLTEXT_TOKEN.findall(query_text)
     return " | ".join(tokens)
-
-
-def _safe_relation_type(relation_type: str) -> str:
-    if not _SAFE_IDENTIFIER.match(relation_type):
-        raise ValueError(
-            f"relation_type {relation_type!r} is not safe to use as a Cypher edge type "
-            "(must match ^[A-Za-z_][A-Za-z0-9_]*$)"
-        )
-    return relation_type
 
 
 def _safe_tenant_id(tenant_id: str) -> str:
@@ -118,6 +110,7 @@ def _entity_to_node_props(entity: Entity, memory_id: str) -> dict[str, Any]:
     return {
         "name": entity.name,
         "entity_type": entity.entity_type,
+        "observed_types_json": json.dumps(entity.observed_types or [entity.entity_type]),
         "properties_json": json.dumps(entity.properties),
         "scope_json": json.dumps(entity.scope.to_query_dict()),
         "provenance_json": entity.provenance.model_dump_json(),
@@ -133,6 +126,11 @@ def _node_to_entity(properties: dict[str, Any]) -> Entity:
         id=UUID(properties["id"]),
         name=properties["name"],
         entity_type=properties["entity_type"],
+        # Legacy nodes written before observed_types existed fall back to the
+        # single canonical type, so the field is always populated on read.
+        observed_types=json.loads(
+            properties.get("observed_types_json") or json.dumps([properties["entity_type"]])
+        ),
         properties=json.loads(properties.get("properties_json", "{}")),
         scope=Scope.from_dict(json.loads(properties["scope_json"])),
         provenance=Provenance.model_validate_json(properties["provenance_json"]),
@@ -145,31 +143,28 @@ def _node_to_entity(properties: dict[str, Any]) -> Entity:
     )
 
 
-def _relation_to_edge_props(relation: Relation, memory_id: str) -> dict[str, Any]:
-    return {
-        "id": str(relation.id),
-        "source_entity_id": str(relation.source_entity_id),
-        "target_entity_id": str(relation.target_entity_id),
-        "properties_json": json.dumps(relation.properties),
-        "scope_json": json.dumps(relation.scope.to_query_dict()),
-        "provenance_json": relation.provenance.model_dump_json(),
-        "claims_json": _claims_to_json(relation.claims),
-        "contributing_sources_json": json.dumps(relation.contributing_sources),
-        "memory_id": memory_id,
-    }
-
-
-def _edge_to_relation(relation_type: str, properties: dict[str, Any]) -> Relation:
+def _claim_to_relation(claim: FactClaim) -> Relation:
+    """Collapse a live FactClaim into a display-edge Relation (subject->object,
+    raw predicate as relation_type). The single chokepoint where the reified
+    claim model is turned back into a simple directed edge for callers."""
+    asserter = claim.asserted_by[0] if claim.asserted_by else "unknown"
+    provenance = Provenance(
+        source=asserter,
+        created_at=claim.valid_from,
+        confidence=claim.confidence,
+    )
     return Relation(
-        id=UUID(properties["id"]),
-        source_entity_id=UUID(properties["source_entity_id"]),
-        target_entity_id=UUID(properties["target_entity_id"]),
-        relation_type=relation_type,
-        properties=json.loads(properties.get("properties_json", "{}")),
-        scope=Scope.from_dict(json.loads(properties["scope_json"])),
-        provenance=Provenance.model_validate_json(properties["provenance_json"]),
-        claims=_claims_from_json(properties.get("claims_json", "[]")),
-        contributing_sources=json.loads(properties.get("contributing_sources_json", "[]")),
+        id=claim.id,
+        source_entity_id=claim.subject_id,
+        target_entity_id=claim.object_id,
+        relation_type=claim.raw_predicate,
+        properties=claim.properties,
+        scope=claim.scope,
+        provenance=provenance,
+        claims=claim.claims,
+        contributing_sources=claim.asserted_by,
+        status=claim.status,
+        disputed_with=claim.disputed_with,
     )
 
 
@@ -217,6 +212,8 @@ class FalkorDBGraphStore(GraphStore):
                 raise
 
     async def write_memory(self, memory: Memory) -> str:
+        """Persist the memory's entities only. Facts are written separately as
+        adjudicated `:Claim` nodes via `upsert_claim` (see GraphStore)."""
         memory_id = str(memory.id)
         graph = self._graph_for(memory.scope.tenant_id)
 
@@ -231,81 +228,64 @@ class FalkorDBGraphStore(GraphStore):
                 params["embedding"] = entity.embedding
             await graph.query(query, params)
 
-        for relation in memory.relations:
-            await self._write_relation(graph, relation, memory_id)
-
         return memory_id
 
-    async def _write_relation(self, graph: AsyncGraph, relation: Relation, memory_id: str) -> None:
-        """Create a new edge, or fold this write's claim(s) into an existing
-        one. Conflict/supersession rules live in models/claim.py -- this is
-        the relation-side equivalent of resolution/entity_resolver.py's
-        merge, just performed at write time (read-before-write) since
-        relation dedup, unlike entity resolution, doesn't happen earlier in
-        the pipeline.
-
-        support_count/last_seen bookkeeping and the matched edge's original
-        `id` are preserved exactly as before this change -- only
-        properties/provenance/claims/contributing_sources are now updated
-        on a match instead of frozen.
-        """
-        rel_type = _safe_relation_type(relation.relation_type)
-        now = datetime.now(UTC).isoformat()
-        source_id = str(relation.source_entity_id)
-        target_id = str(relation.target_entity_id)
-
-        existing = await graph.query(
-            f"MATCH (a:Entity {{id: $source_id}})-[r:{rel_type}]->(b:Entity {{id: $target_id}}) "
-            "RETURN r LIMIT 1",
-            {"source_id": source_id, "target_id": target_id},
-        )
-
-        if existing.result_set:
-            existing_props = existing.result_set[0][0].properties
-            existing_claims = _claims_from_json(existing_props.get("claims_json", "[]"))
-            claims = apply_claim(existing_claims, relation.provenance, relation.properties)
-            properties, provenance, contributing_sources = derive_active_view(claims)
-            merged = relation.model_copy(
-                update={
-                    "id": UUID(existing_props["id"]),
-                    "properties": properties,
-                    "provenance": provenance,
-                    "claims": claims,
-                    "contributing_sources": contributing_sources,
-                }
+    async def find_active_claims(
+        self, scope: Scope, subject_id: UUID, predicate: str
+    ) -> list[FactClaim]:
+        graph = self._graph_for(scope.tenant_id)
+        try:
+            result = await graph.query(
+                queries.FIND_ACTIVE_CLAIMS,
+                {"subject_id": str(subject_id), "predicate": predicate},
             )
-            update_props = _relation_to_edge_props(merged, memory_id)
-            await graph.query(
-                f"MATCH (a:Entity {{id: $source_id}})-[r:{rel_type}]->"
-                f"(b:Entity {{id: $target_id}}) "
-                "SET r += $props, r.support_count = r.support_count + 1, r.last_seen = $now",
-                {
-                    "source_id": source_id,
-                    "target_id": target_id,
-                    "props": update_props,
-                    "now": now,
-                },
-            )
-            return
+        except ResponseError:
+            return []
+        claims = (node_to_claim(row[0].properties) for row in result.result_set)
+        return [claim for claim in claims if scope.includes(claim.scope)]
 
-        claims = apply_claim([], relation.provenance, relation.properties)
-        properties, provenance, contributing_sources = derive_active_view(claims)
-        created = relation.model_copy(
-            update={
-                "properties": properties,
-                "provenance": provenance,
-                "claims": claims,
-                "contributing_sources": contributing_sources,
-            }
-        )
-        create_props = _relation_to_edge_props(created, memory_id)
-        create_props["support_count"] = 1
-        create_props["last_seen"] = now
+    async def upsert_claim(self, claim: FactClaim, memory_id: str) -> None:
+        graph = self._graph_for(claim.scope.tenant_id)
         await graph.query(
-            f"MATCH (a:Entity {{id: $source_id}}), (b:Entity {{id: $target_id}}) "
-            f"CREATE (a)-[r:{rel_type}]->(b) SET r += $props",
-            {"source_id": source_id, "target_id": target_id, "props": create_props},
+            queries.UPSERT_CLAIM,
+            {
+                "id": str(claim.id),
+                "props": claim_to_node_props(claim, memory_id),
+                "subject_id": str(claim.subject_id),
+                "object_id": str(claim.object_id),
+            },
         )
+
+    async def project_display_edges(self, scope: Scope) -> list[Relation]:
+        graph = self._graph_for(scope.tenant_id)
+        try:
+            result = await graph.query(queries.PROJECT_LIVE_CLAIMS)
+        except ResponseError:
+            return []
+        relations: list[Relation] = []
+        for row in result.result_set:
+            claim = node_to_claim(row[0].properties)
+            if not scope.includes(claim.scope):
+                continue
+            relations.append(_claim_to_relation(claim))
+        return relations
+
+    async def find_predicates(self, scope: Scope) -> list[str]:
+        graph = self._graph_for(scope.tenant_id)
+        try:
+            result = await graph.query(queries.DISTINCT_PREDICATES)
+        except ResponseError:
+            return []
+        return sorted({row[0] for row in result.result_set if row[0]})
+
+    async def find_disputed_claims(self, scope: Scope) -> list[FactClaim]:
+        graph = self._graph_for(scope.tenant_id)
+        try:
+            result = await graph.query(queries.DISPUTED_CLAIMS)
+        except ResponseError:
+            return []
+        claims = (node_to_claim(row[0].properties) for row in result.result_set)
+        return [claim for claim in claims if scope.includes(claim.scope)]
 
     async def get_entity(self, entity_id: UUID, tenant_id: str) -> Entity | None:
         graph = self._graph_for(tenant_id)
@@ -397,42 +377,6 @@ class FalkorDBGraphStore(GraphStore):
             matches.append((entity.id, len(matches) + 1))
         return matches
 
-    async def traverse(
-        self,
-        start_entity_ids: list[UUID],
-        max_depth: int,
-        scope: Scope,
-    ) -> list[tuple[Entity, list[Relation]]]:
-        if max_depth < 1:
-            raise ValueError("max_depth must be >= 1")
-
-        graph = self._graph_for(scope.tenant_id)
-        query = (
-            "MATCH (start:Entity) WHERE start.id IN $start_ids "
-            f"MATCH path = (start)-[*1..{int(max_depth)}]-(end:Entity) "
-            "WHERE end.id <> start.id "
-            "RETURN end, relationships(path)"
-        )
-        result = await graph.query(query, {"start_ids": [str(eid) for eid in start_entity_ids]})
-
-        entities_by_id: dict[UUID, Entity] = {}
-        relations_by_entity: dict[UUID, dict[UUID, Relation]] = {}
-
-        for end_node, edges in result.result_set:
-            entity = _node_to_entity(end_node.properties)
-            if not scope.includes(entity.scope):
-                continue
-            entities_by_id[entity.id] = entity
-            relations = relations_by_entity.setdefault(entity.id, {})
-            for edge in edges:
-                relation = _edge_to_relation(edge.relation, edge.properties)
-                relations[relation.id] = relation
-
-        return [
-            (entity, list(relations_by_entity[entity_id].values()))
-            for entity_id, entity in entities_by_id.items()
-        ]
-
     async def traverse_from_seeds(
         self,
         scope: Scope,
@@ -455,24 +399,23 @@ class FalkorDBGraphStore(GraphStore):
             entities = (_node_to_entity(row[0].properties) for row in result.result_set)
             return [entity for entity in entities if scope.includes(entity.scope)]
 
-        async def fetch_neighbours(
-            frontier_ids: list[str], visited_ids: list[str]
-        ) -> list[tuple[Entity, Relation]]:
-            # Undirected: matches the one-hop `traverse` convention so a fact
-            # is reachable from either endpoint. One query for the whole
-            # frontier, not one per node.
+        async def fetch_neighbours(frontier_ids: list[str]) -> list[tuple[Entity, Relation]]:
+            # One hop through live claims: a `:Claim` node is treated as a logical
+            # edge between its subject and object, reachable from either endpoint
+            # (so a fact surfaces from either side). Superseded/retracted claims
+            # are excluded -- recall only traverses current truth. One query per
+            # frontier; the BFS dedups and decides re-expansion (retrieval/
+            # traversal.py).
             result = await graph.query(
-                "MATCH (e:Entity)-[r]-(neighbour:Entity) "
-                "WHERE e.id IN $frontier_ids AND NOT neighbour.id IN $visited_ids "
-                "RETURN neighbour, r",
-                {"frontier_ids": frontier_ids, "visited_ids": visited_ids},
+                queries.FETCH_CLAIM_NEIGHBOURS,
+                {"frontier_ids": frontier_ids},
             )
             pairs: list[tuple[Entity, Relation]] = []
-            for neighbour_node, edge in result.result_set:
-                neighbour = _node_to_entity(neighbour_node.properties)
+            for row in result.result_set:
+                neighbour = _node_to_entity(row[0].properties)
                 if not scope.includes(neighbour.scope):
                     continue
-                relation = _edge_to_relation(edge.relation, edge.properties)
+                relation = _claim_to_relation(node_to_claim(row[1].properties))
                 pairs.append((neighbour, relation))
             return pairs
 
@@ -488,16 +431,21 @@ class FalkorDBGraphStore(GraphStore):
     async def delete_memory(self, memory_id: str, tenant_id: str) -> bool:
         graph = self._graph_for(tenant_id)
         result = await graph.query(
-            "MATCH (n:Entity {memory_id: $memory_id}) DETACH DELETE n",
+            queries.DELETE_MEMORY_WITH_CLAIMS,
             {"memory_id": memory_id},
         )
+        return bool(result.nodes_deleted > 0)
+
+    async def delete_entity(self, entity_id: UUID, tenant_id: str) -> bool:
+        graph = self._graph_for(tenant_id)
+        result = await graph.query(queries.DELETE_ENTITY_WITH_CLAIMS, {"id": str(entity_id)})
         return bool(result.nodes_deleted > 0)
 
     async def graph_stats(self, tenant_id: str) -> tuple[int, int]:
         graph = self._graph_for(tenant_id)
         try:
-            nodes = await graph.query("MATCH (n:Entity) RETURN count(n)")
-            edges = await graph.query("MATCH (:Entity)-[r]->(:Entity) RETURN count(r)")
+            nodes = await graph.query(queries.COUNT_ENTITIES)
+            edges = await graph.query(queries.COUNT_LIVE_CLAIMS)
         except ResponseError:
             # Graph key doesn't exist yet (nothing ever written for this tenant).
             return (0, 0)

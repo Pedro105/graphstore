@@ -93,6 +93,34 @@ async def test_traverse_from_seeds_includes_seed_and_dedups(store):
     assert truncated is False
 
 
+async def test_connected_seeds_return_their_connecting_edge(store):
+    # Regression: two seeds connected by an edge must come back WITH that edge.
+    # A depth-2 traversal from one seed surfaces a neighbour; seeding both that
+    # seed and its neighbour (so both are "visited" from the first hop) must
+    # still return the relation between them, not just the two entities.
+    scope = Scope.from_dict({"tenant_id": TENANT_ID})
+    seed_id = await _seed_id(store, scope, "Dr. Sarah Chen")
+
+    entities_d1, relations_d1, _ = await store.traverse_from_seeds(scope, [seed_id], depth=1)
+    neighbour_ids = [str(e.id) for e in entities_d1 if str(e.id) != seed_id]
+    if not neighbour_ids:
+        pytest.skip("seed has no depth-1 neighbour to connect to")
+    neighbour_id = neighbour_ids[0]
+
+    # Seed BOTH endpoints. The connecting edge(s) must be present.
+    entities, relations, _ = await store.traverse_from_seeds(
+        scope, [seed_id, neighbour_id], depth=1
+    )
+    ids = {str(e.id) for e in entities}
+    assert seed_id in ids and neighbour_id in ids
+    connecting = [
+        r
+        for r in relations
+        if {str(r.source_entity_id), str(r.target_entity_id)} == {seed_id, neighbour_id}
+    ]
+    assert connecting, "edge between two connected seeds must be returned"
+
+
 async def test_max_entities_cap_truncates_on_eval_graph(store):
     scope = Scope.from_dict({"tenant_id": TENANT_ID})
     seed_id = await _seed_id(store, scope, "Dr. Sarah Chen")

@@ -4,15 +4,6 @@ import { DOCS_MCP_URL, DOCS_URL } from "@/lib/links";
 
 const FOOTER_SECTIONS = [
   {
-    title: "Product",
-    links: [
-      { label: "Features", href: "/features" },
-      { label: "Pricing", href: "/pricing" },
-      { label: "Changelog", href: "#" },
-      { label: "Roadmap", href: "#" },
-    ],
-  },
-  {
     title: "Developers",
     links: [
       { label: "Documentation", href: DOCS_URL, external: true },
@@ -21,20 +12,10 @@ const FOOTER_SECTIONS = [
     ],
   },
   {
-    title: "Company",
+    title: "Source",
     links: [
-      { label: "About", href: "#" },
-      { label: "Blog", href: "#" },
-      { label: "Careers", href: "#" },
-      { label: "Contact", href: "#" },
-    ],
-  },
-  {
-    title: "Legal",
-    links: [
-      { label: "Privacy Policy", href: "#" },
-      { label: "Terms of Service", href: "#" },
-      { label: "Security", href: "#" },
+      { label: "GitHub", href: "https://github.com/Pedro105/graphstore", external: true },
+      { label: "License (MIT)", href: "https://github.com/Pedro105/graphstore/blob/main/LICENSE", external: true },
     ],
   },
 ];
@@ -86,30 +67,10 @@ export function SiteFooter() {
             </div>
           ))}
         </div>
-        <div className="mt-12 flex flex-col items-start justify-between gap-4 pt-6 sm:flex-row sm:items-center">
+        <div className="mt-12 pt-6">
           <p className="text-xs text-muted-foreground">
-            &copy; 2026 ContextStore. All rights reserved.
+            ContextStore — a research project by Pedro Costa. MIT License.
           </p>
-          <div className="flex items-center gap-5">
-            <Link
-              href="#"
-              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              Privacy
-            </Link>
-            <Link
-              href="#"
-              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              Terms
-            </Link>
-            <Link
-              href="#"
-              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              Security
-            </Link>
-          </div>
         </div>
       </div>
     </footer>

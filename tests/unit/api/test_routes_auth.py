@@ -103,6 +103,35 @@ def test_caller_cannot_spoof_tenant_via_extra_scope(client):
     assert result_scope.get("user_id") == "u1"
 
 
+def test_delete_entity_without_auth_header_401(client):
+    response = client.delete(f"/v1/entities/{uuid4()}")
+    assert response.status_code == 401
+
+
+def test_delete_entity_success_returns_204_and_scopes_to_key_tenant(client, monkeypatch):
+    graph_store = app.dependency_overrides[get_graph_store]()
+    graph_store.delete_entity = AsyncMock(return_value=True)
+    entity_id = uuid4()
+
+    response = client.delete(
+        f"/v1/entities/{entity_id}", headers={"Authorization": "Bearer goodkey"}
+    )
+
+    assert response.status_code == 204
+    # Deleted from the caller's own tenant (derived from the key), not anything
+    # supplied by the request.
+    graph_store.delete_entity.assert_awaited_once_with(entity_id, TENANT_FROM_KEY)
+
+
+def test_delete_entity_not_found_returns_404(client):
+    graph_store = app.dependency_overrides[get_graph_store]()
+    graph_store.delete_entity = AsyncMock(return_value=False)
+
+    response = client.delete(f"/v1/entities/{uuid4()}", headers={"Authorization": "Bearer goodkey"})
+
+    assert response.status_code == 404
+
+
 def test_keys_endpoint_requires_admin_token(client):
     # No admin token configured in the test env -> management endpoints closed.
     response = client.post(

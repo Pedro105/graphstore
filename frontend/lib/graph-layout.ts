@@ -14,8 +14,10 @@ export interface LayoutEdge {
   target: string;
 }
 
-export const NODE_WIDTH = 180;
-export const NODE_HEIGHT = 56;
+// Circular entity nodes (see components/memories/entity-node.tsx) -- square
+// bounding box so dagre spaces the circles evenly in both axes.
+export const NODE_WIDTH = 120;
+export const NODE_HEIGHT = 120;
 
 export function layoutGraph(
   nodes: LayoutNode[],

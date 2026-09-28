@@ -13,10 +13,25 @@ from falkordb.asyncio import FalkorDB
 
 from contextstore.graph.falkordb_store import FalkorDBGraphStore
 from contextstore.models.entity import Entity
+from contextstore.models.fact_claim import FactClaim
 from contextstore.models.memory import Memory
 from contextstore.models.provenance import Provenance
-from contextstore.models.relation import Relation
 from contextstore.models.scope import Scope
+
+
+def make_claim(scope, subject_id, object_id, **overrides) -> FactClaim:
+    """A minimal active FactClaim for store-level tests (the adjudicator builds
+    these in the real write path; here we exercise persistence directly)."""
+    defaults = dict(
+        predicate="works_at",
+        raw_predicate="works_at",
+        subject_id=subject_id,
+        object_id=object_id,
+        asserted_by=["integration_test"],
+        scope=scope,
+    )
+    defaults.update(overrides)
+    return FactClaim(**defaults)
 
 
 def _falkordb_env() -> tuple[str, int]:
@@ -83,102 +98,68 @@ async def test_get_entity_returns_none_when_missing(store, tenant_id):
     assert await store.get_entity(uuid.uuid4(), tenant_id) is None
 
 
-async def test_write_memory_with_relation(store, tenant_id):
+async def test_write_memory_persists_entities_only(store, tenant_id):
+    # In the reified-claim model, write_memory persists entities; facts are
+    # written separately as :Claim nodes via upsert_claim.
     scope = make_scope(tenant_id, user_id="u_1")
     provenance = make_provenance()
     pedro = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
     acme = Entity(name="Acme", entity_type="org", scope=scope, provenance=provenance)
-    works_at = Relation(
-        source_entity_id=pedro.id,
-        target_entity_id=acme.id,
-        relation_type="works_at",
-        scope=scope,
-        provenance=provenance,
-    )
-    memory = Memory(
-        content="Pedro works at Acme.",
-        entities=[pedro, acme],
-        relations=[works_at],
-        scope=scope,
-        provenance=provenance,
+    await store.write_memory(
+        Memory(
+            content="Pedro works at Acme.",
+            entities=[pedro, acme],
+            scope=scope,
+            provenance=provenance,
+        )
     )
 
-    await store.write_memory(memory)
-
-    results = await store.traverse([pedro.id], max_depth=1, scope=scope)
-    assert len(results) == 1
-    entity, relations = results[0]
-    assert entity.id == acme.id
-    assert len(relations) == 1
-    assert relations[0].relation_type == "works_at"
-    assert relations[0].source_entity_id == pedro.id
-    assert relations[0].target_entity_id == acme.id
+    assert (await store.get_entity(pedro.id, tenant_id)) is not None
+    # No claims written yet -> no display edges.
+    assert await store.project_display_edges(scope) == []
 
 
-async def test_write_memory_relation_conflict_keeps_history_and_support_count(store, tenant_id):
+async def test_upsert_claim_round_trips_and_projects_as_directed_edge(store, tenant_id):
     scope = make_scope(tenant_id, user_id="u_1")
-    globex = Entity(name="Globex", entity_type="org", scope=scope, provenance=make_provenance())
-    product_y = Entity(
-        name="Product Y", entity_type="product", scope=scope, provenance=make_provenance()
-    )
+    provenance = make_provenance()
+    pedro = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
+    acme = Entity(name="Acme", entity_type="org", scope=scope, provenance=provenance)
     await store.write_memory(
-        Memory(
-            content="seed entities",
-            entities=[globex, product_y],
-            scope=scope,
-            provenance=make_provenance(),
-        )
+        Memory(content="seed", entities=[pedro, acme], scope=scope, provenance=provenance)
     )
 
-    first_quote = Relation(
-        source_entity_id=globex.id,
-        target_entity_id=product_y.id,
-        relation_type="quoted",
-        properties={"price": "4.20"},
-        scope=scope,
-        provenance=make_provenance(source="supplier_agent"),
-    )
+    claim = make_claim(scope, pedro.id, acme.id, raw_predicate="works_at", predicate="works_at")
+    await store.upsert_claim(claim, memory_id="m1")
+
+    # Candidate lookup finds the active claim.
+    candidates = await store.find_active_claims(scope, pedro.id, "works_at")
+    assert [c.id for c in candidates] == [claim.id]
+
+    # Projection collapses it to a directed display edge.
+    edges = await store.project_display_edges(scope)
+    assert len(edges) == 1
+    assert edges[0].source_entity_id == pedro.id
+    assert edges[0].target_entity_id == acme.id
+    assert edges[0].relation_type == "works_at"
+    assert edges[0].status == "active"
+
+
+async def test_superseded_claim_drops_out_of_active_and_projection(store, tenant_id):
+    scope = make_scope(tenant_id, user_id="u_1")
+    provenance = make_provenance()
+    pedro = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
+    acme = Entity(name="Acme", entity_type="org", scope=scope, provenance=provenance)
     await store.write_memory(
-        Memory(
-            content="Globex quoted $4.20",
-            entities=[],
-            relations=[first_quote],
-            scope=scope,
-            provenance=make_provenance(source="supplier_agent"),
-        )
+        Memory(content="seed", entities=[pedro, acme], scope=scope, provenance=provenance)
     )
+    claim = make_claim(scope, pedro.id, acme.id)
+    await store.upsert_claim(claim, memory_id="m1")
 
-    second_quote = Relation(
-        source_entity_id=globex.id,
-        target_entity_id=product_y.id,
-        relation_type="quoted",
-        properties={"price": "4.50"},
-        scope=scope,
-        provenance=make_provenance(source="supplier_agent"),
-    )
-    await store.write_memory(
-        Memory(
-            content="Globex revised to $4.50",
-            entities=[],
-            relations=[second_quote],
-            scope=scope,
-            provenance=make_provenance(source="supplier_agent"),
-        )
-    )
+    # Transition the same claim id to superseded (upsert is the transition path).
+    await store.upsert_claim(claim.model_copy(update={"status": "superseded"}), memory_id="m2")
 
-    results = await store.traverse([globex.id], max_depth=1, scope=scope)
-    _, relations = next(r for r in results if r[0].id == product_y.id)
-    assert len(relations) == 1
-    quoted = relations[0]
-
-    # Same edge throughout -- id is stable, not recreated on conflict.
-    assert quoted.id == first_quote.id
-    # Active value reflects the latest claim ("latest wins").
-    assert quoted.properties == {"price": "4.50"}
-    # Full claim history is kept, old claim marked superseded, not deleted.
-    assert [c.value for c in quoted.claims] == ["4.20", "4.50"]
-    assert quoted.claims[1].provenance.supersedes == [str(quoted.claims[0].id)]
-    assert quoted.contributing_sources == ["supplier_agent"]
+    assert await store.find_active_claims(scope, pedro.id, "works_at") == []
+    assert await store.project_display_edges(scope) == []
 
 
 async def test_find_entities_by_name_and_type(store, tenant_id):
@@ -373,33 +354,53 @@ async def test_ensure_graph_initialized_is_idempotent(store, tenant_id):
 # --- Admin operator support: graph_stats / drop_graph ------------------------
 
 
+async def test_find_disputed_claims_returns_disputed_excludes_resolved(store, tenant_id):
+    scope = make_scope(tenant_id)
+    provenance = make_provenance()
+    pedro = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
+    asml = Entity(name="ASML", entity_type="org", scope=scope, provenance=provenance)
+    booking = Entity(name="Booking", entity_type="org", scope=scope, provenance=provenance)
+    superseded_obj = Entity(name="Old", entity_type="org", scope=scope, provenance=provenance)
+    await store.write_memory(
+        Memory(
+            content="seed",
+            entities=[pedro, asml, booking, superseded_obj],
+            scope=scope,
+            provenance=provenance,
+        )
+    )
+    await store.upsert_claim(
+        make_claim(scope, pedro.id, asml.id, status="disputed", asserted_by=["agent_a"]), "m1"
+    )
+    await store.upsert_claim(
+        make_claim(scope, pedro.id, booking.id, status="disputed", asserted_by=["agent_b"]), "m1"
+    )
+    # A superseded (resolved) fact must NOT surface as a live conflict.
+    await store.upsert_claim(
+        make_claim(scope, pedro.id, superseded_obj.id, status="superseded"), "m1"
+    )
+
+    disputed = await store.find_disputed_claims(scope)
+    objects = {c.object_id for c in disputed}
+    assert objects == {asml.id, booking.id}
+
+
 async def test_graph_stats_zero_for_unwritten_tenant(store, tenant_id):
     # A tenant whose graph was never written to reports (0, 0), not an error.
     assert await store.graph_stats(tenant_id) == (0, 0)
 
 
-async def test_graph_stats_counts_nodes_and_edges(store, tenant_id):
+async def test_graph_stats_counts_entities_and_live_claims(store, tenant_id):
     scope = make_scope(tenant_id)
     provenance = make_provenance()
     a = Entity(name="Pedro", entity_type="person", scope=scope, provenance=provenance)
     b = Entity(name="ASML", entity_type="org", scope=scope, provenance=provenance)
-    relation = Relation(
-        source_entity_id=a.id,
-        target_entity_id=b.id,
-        relation_type="works_at",
-        scope=scope,
-        provenance=provenance,
-    )
     await store.write_memory(
-        Memory(
-            content="Pedro works at ASML.",
-            entities=[a, b],
-            relations=[relation],
-            scope=scope,
-            provenance=provenance,
-        )
+        Memory(content="seed", entities=[a, b], scope=scope, provenance=provenance)
     )
+    await store.upsert_claim(make_claim(scope, a.id, b.id), memory_id="m1")
 
+    # 2 entities + 1 live claim.
     assert await store.graph_stats(tenant_id) == (2, 1)
 
 
